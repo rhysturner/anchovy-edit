@@ -5,6 +5,8 @@ import { useVideoStore, Clip, EditSegment } from '../store/videoStore'
 
 const FFMPEG_CORE_BASE = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm'
 const TARGET_DURATION = 30 // seconds for the highlight reel
+/** Safety margin (seconds) added to each segment's boundary to avoid overflow. */
+const SEGMENT_END_BUFFER = 0.05
 
 /**
  * Detects beat onsets in an audio file using energy-based onset detection
@@ -14,8 +16,12 @@ async function detectBeats(audioFile: File): Promise<number[]> {
   const arrayBuffer = await audioFile.arrayBuffer()
 
   const audioContext = new AudioContext()
-  const audioBuffer = await audioContext.decodeAudioData(arrayBuffer)
-  await audioContext.close()
+  let audioBuffer: AudioBuffer
+  try {
+    audioBuffer = await audioContext.decodeAudioData(arrayBuffer)
+  } finally {
+    await audioContext.close()
+  }
 
   const channelData = audioBuffer.getChannelData(0)
   const sampleRate = audioBuffer.sampleRate
@@ -93,10 +99,10 @@ export function generateEditMap(
     const clip = clips[clipIndex % clips.length]
     clipIndex++
 
-    const safeMax = clip.duration - segDuration - 0.05
+    const safeMax = clip.duration - segDuration - SEGMENT_END_BUFFER
     if (safeMax < 0) {
       // Clip too short — clamp to whatever is available
-      const clampedDuration = Math.min(segDuration, clip.duration - 0.05)
+      const clampedDuration = Math.min(segDuration, clip.duration - SEGMENT_END_BUFFER)
       if (clampedDuration <= 0) continue
       segments.push({ clipId: clip.id, inPoint: 0, outPoint: parseFloat(clampedDuration.toFixed(3)), beatStart })
       totalTime += clampedDuration
@@ -279,7 +285,11 @@ export function useAutoEdit() {
       setAutoEditStatus('Done!')
     } catch (err) {
       console.error('[useAutoEdit] error:', err)
-      setAutoEditStatus('Something went wrong — check the console for details.')
+      const hint =
+        err instanceof Error && err.message
+          ? err.message
+          : 'Ensure video files are valid MP4/MOV and the audio file is MP3.'
+      setAutoEditStatus(`Error: ${hint}`)
     } finally {
       setIsAutoEditing(false)
     }

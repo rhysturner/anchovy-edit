@@ -2,6 +2,8 @@ import React, { useCallback, useRef } from 'react'
 import { useVideoStore, Clip } from '../store/videoStore'
 import { useAutoEdit } from '../hooks/useAutoEdit'
 
+const SUPPORTED_VIDEO_MIME = /video\/(mp4|quicktime)/
+
 /** Resolves the duration of a video file via a temporary HTMLVideoElement. */
 function getVideoDuration(url: string): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -23,7 +25,7 @@ const AutoEditPanel: React.FC = () => {
   const handleVideoFiles = useCallback(
     async (files: FileList) => {
       for (const file of Array.from(files)) {
-        if (!file.type.match(/video\/(mp4|quicktime)/)) continue
+        if (!file.type.match(SUPPORTED_VIDEO_MIME)) continue
         const url = URL.createObjectURL(file)
         let duration = 0
         try {
