@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from 'react'
 import { useMotionValue } from 'framer-motion'
-import { useSequenceStore, Slice } from '../store/sequenceStore'
+import { useSequenceStore, TrackItem } from '../store/sequenceStore'
 
 export type TrimSide = 'head' | 'tail'
 
@@ -15,9 +15,15 @@ export interface TrimDragState {
 
 interface UseTrimOptions {
   sequenceId: string
-  slice: Slice
+  slice: TrackItem
   /** Pixels per second on the current timeline ruler. */
   pxPerSecond: number
+  /**
+   * Called on every pointer-move while a handle is being dragged.
+   * Receives the current source timestamp so the player can show the exact
+   * frame being trimmed to in real-time.
+   */
+  onTrimPreview?: (time: number | null) => void
 }
 
 interface UseTrimReturn {
@@ -31,22 +37,27 @@ interface UseTrimReturn {
 }
 
 /**
- * useTrim — precision trim hook for a single Slice.
+ * useTrim — precision trim hook for a single TrackItem.
  *
  * Head trim (left edge):
- *   Dragging right increases `sourceOffset` and decreases `duration` so the
- *   visible end-point stays fixed — the clip starts later in the source.
- *   Dragging left extends the clip back into the source.
+ *   Dragging right increases `startTime`, `sourceOffset` and decreases
+ *   `duration` so the visible end-point stays fixed — the clip starts later
+ *   on the timeline and later in the source material.
+ *   Dragging left reverses all three changes, extending the clip back.
  *
  * Tail trim (right edge):
  *   Dragging right extends `duration`; dragging left shortens it.
+ *   `startTime` and `sourceOffset` are unchanged.
  *
  * Both handles expose a MotionValue (`headX` / `tailX`) that drives a
  * framer-motion `motion.div` for smooth 60 fps visual feedback.  The handle
  * resets to x=0 after each drag because the underlying slice data has already
  * been updated in real-time.
+ *
+ * The optional `onTrimPreview` callback is fired on every pointer-move so the
+ * main video player can scrub to the exact frame being trimmed to.
  */
-export function useTrim({ sequenceId, slice, pxPerSecond }: UseTrimOptions): UseTrimReturn {
+export function useTrim({ sequenceId, slice, pxPerSecond, onTrimPreview }: UseTrimOptions): UseTrimReturn {
   const updateSlice = useSequenceStore((s) => s.updateSlice)
   const headX = useMotionValue(0)
   const tailX = useMotionValue(0)
@@ -61,6 +72,7 @@ export function useTrim({ sequenceId, slice, pxPerSecond }: UseTrimOptions): Use
   const dragRef = useRef<{
     side: TrimSide
     startPointerX: number
+    origStartTime: number
     origDuration: number
     origSourceOffset: number
   } | null>(null)
@@ -74,34 +86,41 @@ export function useTrim({ sequenceId, slice, pxPerSecond }: UseTrimOptions): Use
       dragRef.current = {
         side,
         startPointerX: e.clientX,
+        origStartTime: slice.startTime,
         origDuration: slice.duration,
         origSourceOffset: slice.sourceOffset,
       }
 
       const motionVal = side === 'head' ? headX : tailX
 
+      const initialTimestamp =
+        side === 'head' ? slice.sourceOffset : slice.sourceOffset + slice.duration
       setDragState({
         isDragging: true,
         side,
         tooltipDelta: 0,
-        tooltipTimestamp: side === 'head' ? slice.sourceOffset : slice.sourceOffset + slice.duration,
+        tooltipTimestamp: initialTimestamp,
       })
+      onTrimPreview?.(initialTimestamp)
 
       const handleMove = (ev: PointerEvent) => {
         if (!dragRef.current) return
-        const { startPointerX, origDuration, origSourceOffset } = dragRef.current
+        const { startPointerX, origStartTime, origDuration, origSourceOffset } = dragRef.current
         const deltaPx = ev.clientX - startPointerX
         const deltaSec = deltaPx / pxPerSecond
 
         if (side === 'head') {
-          // Clamp: can't trim past the tail, and sourceOffset can't go below 0.
+          // Head trim: x position, sourceOffset, and duration all change together.
+          // Clamp: can't trim past the tail (min duration 0.1s), and sourceOffset can't go below 0.
           const maxTrimIn = origDuration - 0.1
           const maxExtend = origSourceOffset
           const clamped = Math.max(-maxExtend, Math.min(maxTrimIn, deltaSec))
+          const newStartTime = origStartTime + clamped
           const newSourceOffset = origSourceOffset + clamped
           const newDuration = origDuration - clamped
 
           updateSlice(sequenceId, slice.id, {
+            startTime: parseFloat(newStartTime.toFixed(3)),
             sourceOffset: parseFloat(newSourceOffset.toFixed(3)),
             duration: parseFloat(newDuration.toFixed(3)),
           })
@@ -112,9 +131,11 @@ export function useTrim({ sequenceId, slice, pxPerSecond }: UseTrimOptions): Use
             tooltipDelta: parseFloat(clamped.toFixed(3)),
             tooltipTimestamp: parseFloat(newSourceOffset.toFixed(3)),
           })
+          onTrimPreview?.(parseFloat(newSourceOffset.toFixed(3)))
         } else {
-          // Tail: simply adjust duration.
+          // Tail trim: only duration changes.
           const newDuration = Math.max(0.1, origDuration + deltaSec)
+          const tailTimestamp = parseFloat((origSourceOffset + newDuration).toFixed(3))
           updateSlice(sequenceId, slice.id, {
             duration: parseFloat(newDuration.toFixed(3)),
           })
@@ -123,8 +144,9 @@ export function useTrim({ sequenceId, slice, pxPerSecond }: UseTrimOptions): Use
             isDragging: true,
             side,
             tooltipDelta: parseFloat(deltaSec.toFixed(3)),
-            tooltipTimestamp: parseFloat((origSourceOffset + newDuration).toFixed(3)),
+            tooltipTimestamp: tailTimestamp,
           })
+          onTrimPreview?.(tailTimestamp)
         }
       }
 
@@ -133,6 +155,7 @@ export function useTrim({ sequenceId, slice, pxPerSecond }: UseTrimOptions): Use
         // Reset handle position — slice data is already up-to-date.
         motionVal.set(0)
         setDragState({ isDragging: false, side: null, tooltipDelta: 0, tooltipTimestamp: 0 })
+        onTrimPreview?.(null)
         window.removeEventListener('pointermove', handleMove)
         window.removeEventListener('pointerup', handleUp)
       }
@@ -140,7 +163,7 @@ export function useTrim({ sequenceId, slice, pxPerSecond }: UseTrimOptions): Use
       window.addEventListener('pointermove', handleMove)
       window.addEventListener('pointerup', handleUp)
     },
-    [headX, tailX, pxPerSecond, sequenceId, slice, updateSlice],
+    [headX, tailX, pxPerSecond, sequenceId, slice, updateSlice, onTrimPreview],
   )
 
   const onHeadPointerDown = useCallback(

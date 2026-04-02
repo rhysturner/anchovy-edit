@@ -1,6 +1,6 @@
 import React, { useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { useSequenceStore, Slice } from '../store/sequenceStore'
+import { useSequenceStore, TrackItem } from '../store/sequenceStore'
 import { useTrim, formatDelta, formatTimestamp } from '../hooks/useTrim'
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -9,19 +9,75 @@ const PX_PER_SECOND = 48
 const RULER_TICK_INTERVAL = 2 // seconds between ruler ticks
 const TRACK_HEIGHT = 56 // px
 
-// ─── SliceBlock ──────────────────────────────────────────────────────────────
+// ─── SequenceBreadcrumbs ─────────────────────────────────────────────────────
 
-interface SliceBlockProps {
-  sequenceId: string
-  slice: Slice
-  onDoubleClick: (slice: Slice) => void
+interface SequenceBreadcrumbsProps {
+  /** Ordered list of sequence IDs from root to current. */
+  navigationHistory: string[]
+  /** Human-readable label for each sequence ID. */
+  labelFor: (id: string) => string
+  /** Navigate directly to a sequence that is already in the history. */
+  onNavigateTo: (sequenceId: string) => void
 }
 
-const SliceBlock: React.FC<SliceBlockProps> = ({ sequenceId, slice, onDoubleClick }) => {
+/**
+ * SequenceBreadcrumbs — renders the full drill-down path.
+ *
+ * Each ancestor breadcrumb is a clickable button that calls `onNavigateTo`
+ * to pop the history back to that level instantly.  The current (last) entry
+ * is displayed as plain text.
+ */
+export const SequenceBreadcrumbs: React.FC<SequenceBreadcrumbsProps> = ({
+  navigationHistory,
+  labelFor,
+  onNavigateTo,
+}) => (
+  <nav className="flex items-center gap-1 text-sm text-zinc-400" aria-label="Sequence navigation">
+    {navigationHistory.map((id, i) => {
+      const label = labelFor(id)
+      const isLast = i === navigationHistory.length - 1
+      return (
+        <React.Fragment key={id}>
+          {i > 0 && <span className="text-zinc-600" aria-hidden="true">/</span>}
+          {isLast ? (
+            <span className="text-white font-semibold" aria-current="page">
+              {label}
+            </span>
+          ) : (
+            <button
+              className="text-zinc-500 hover:text-zinc-200 transition-colors underline-offset-2 hover:underline"
+              onClick={() => onNavigateTo(id)}
+              title={`Return to ${label}`}
+            >
+              {label}
+            </button>
+          )}
+        </React.Fragment>
+      )
+    })}
+  </nav>
+)
+
+// ─── TimelineItem ─────────────────────────────────────────────────────────────
+
+interface TimelineItemProps {
+  sequenceId: string
+  slice: TrackItem
+  onDoubleClick: (slice: TrackItem) => void
+}
+
+/**
+ * TimelineItem — renders a single clip or nested-sequence block on the track,
+ * including the left (Head) and right (Tail) precision-trim handles.
+ */
+const TimelineItem: React.FC<TimelineItemProps> = ({ sequenceId, slice, onDoubleClick }) => {
+  const setTrimPreviewTime = useSequenceStore((s) => s.setTrimPreviewTime)
+
   const { dragState, headX, tailX, onHeadPointerDown, onTailPointerDown } = useTrim({
     sequenceId,
     slice,
     pxPerSecond: PX_PER_SECOND,
+    onTrimPreview: setTrimPreviewTime,
   })
 
   const left = slice.startTime * PX_PER_SECOND
@@ -30,13 +86,14 @@ const SliceBlock: React.FC<SliceBlockProps> = ({ sequenceId, slice, onDoubleClic
   const isHead = dragState.isDragging && dragState.side === 'head'
   const isTail = dragState.isDragging && dragState.side === 'tail'
   const isAnyDrag = dragState.isDragging
+  const isNested = slice.kind === 'sequence'
 
   return (
     <div
       className="absolute top-2 select-none"
       style={{ left, width, height: TRACK_HEIGHT - 16 }}
     >
-      {/* Slice body */}
+      {/* Item body */}
       <div
         className="relative h-full rounded-md overflow-visible cursor-pointer group"
         style={{
@@ -45,11 +102,7 @@ const SliceBlock: React.FC<SliceBlockProps> = ({ sequenceId, slice, onDoubleClic
           boxShadow: isAnyDrag ? `0 0 0 2px ${slice.color}88` : undefined,
         }}
         onDoubleClick={() => onDoubleClick(slice)}
-        title={
-          slice.nestedSequenceId
-            ? 'Double-click to drill into this sequence'
-            : undefined
-        }
+        title={isNested ? 'Double-click to drill into this sequence' : undefined}
       >
         {/* Label */}
         <span
@@ -57,7 +110,7 @@ const SliceBlock: React.FC<SliceBlockProps> = ({ sequenceId, slice, onDoubleClic
           style={{ color: slice.color }}
         >
           {slice.label}
-          {slice.nestedSequenceId && (
+          {isNested && (
             <span className="ml-1 opacity-60 text-[10px]">▶▶</span>
           )}
         </span>
@@ -168,15 +221,17 @@ const Ruler: React.FC<RulerProps> = ({ totalSeconds }) => {
 /**
  * SequenceView — drill-down timeline component.
  *
- * Shows the slices of the currently-active sequence, a breadcrumb trail, and a
- * "Back" button.  Double-clicking a slice that has a `nestedSequenceId` drills
- * into that nested sequence, pushing it onto the navigation stack.
+ * Shows the track items of the currently-active sequence, a breadcrumb trail,
+ * and a "Back" button.  Double-clicking a SequenceItem drills into it by
+ * pushing its ID onto the navigation history.  Clicking any ancestor in the
+ * breadcrumb trail navigates directly back to that level.
  */
 const SequenceView: React.FC = () => {
-  const { sequences, navigationStack, pushNavigation, popNavigation } = useSequenceStore()
+  const { sequences, navigationHistory, pushNavigation, popNavigation, navigateTo, trimPreviewTime } =
+    useSequenceStore()
   const scrollRef = useRef<HTMLDivElement>(null)
 
-  const currentId = navigationStack[navigationStack.length - 1]
+  const currentId = navigationHistory[navigationHistory.length - 1]
   const currentSequence = sequences[currentId]
 
   if (!currentSequence) return null
@@ -184,20 +239,17 @@ const SequenceView: React.FC = () => {
   const slices = currentSequence.slices
   const totalSeconds = slices.reduce((max, s) => Math.max(max, s.startTime + s.duration), 0) + 2
 
-  const handleDoubleClick = (slice: Slice) => {
-    if (slice.nestedSequenceId && sequences[slice.nestedSequenceId]) {
+  const handleDoubleClick = (slice: TrackItem) => {
+    if (slice.kind === 'sequence' && sequences[slice.nestedSequenceId]) {
       pushNavigation(slice.nestedSequenceId)
     }
   }
-
-  // Build breadcrumb labels.
-  const breadcrumbs = navigationStack.map((id) => sequences[id]?.label ?? id)
 
   return (
     <div className="flex flex-col gap-3 w-full bg-zinc-900 rounded-xl border border-zinc-800 p-4">
       {/* ── Header ── */}
       <div className="flex items-center gap-3">
-        {navigationStack.length > 1 && (
+        {navigationHistory.length > 1 && (
           <button
             onClick={popNavigation}
             className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-lg transition-colors"
@@ -209,31 +261,28 @@ const SequenceView: React.FC = () => {
           </button>
         )}
 
-        {/* Breadcrumb */}
-        <nav className="flex items-center gap-1 text-sm text-zinc-400">
-          {breadcrumbs.map((label, i) => (
-            <React.Fragment key={i}>
-              {i > 0 && <span className="text-zinc-600">/</span>}
-              <span
-                className={
-                  i === breadcrumbs.length - 1 ? 'text-white font-semibold' : 'text-zinc-500'
-                }
-              >
-                {label}
-              </span>
-            </React.Fragment>
-          ))}
-        </nav>
+        <SequenceBreadcrumbs
+          navigationHistory={navigationHistory}
+          labelFor={(id) => sequences[id]?.label ?? id}
+          onNavigateTo={navigateTo}
+        />
       </div>
 
       {/* ── Hint ── */}
-      <p className="text-[11px] text-zinc-600">
-        Drag <span className="text-zinc-400">◀ Head</span> or{' '}
-        <span className="text-zinc-400">Tail ▶</span> handles to precision-trim.
-        {slices.some((s) => s.nestedSequenceId) && (
-          <> Double-click a <span className="text-zinc-400">▶▶</span> clip to drill in.</>
+      <div className="flex items-center justify-between">
+        <p className="text-[11px] text-zinc-600">
+          Drag <span className="text-zinc-400">◀ Head</span> or{' '}
+          <span className="text-zinc-400">Tail ▶</span> handles to precision-trim.
+          {slices.some((s) => s.kind === 'sequence') && (
+            <> Double-click a <span className="text-zinc-400">▶▶</span> clip to drill in.</>
+          )}
+        </p>
+        {trimPreviewTime !== null && (
+          <span className="text-[10px] font-mono text-orange-400 bg-zinc-800 px-2 py-0.5 rounded">
+            ▶ preview {formatTimestamp(trimPreviewTime)}
+          </span>
         )}
-      </p>
+      </div>
 
       {/* ── Timeline ruler + track ── */}
       <div ref={scrollRef} className="overflow-x-auto pb-2">
@@ -259,9 +308,9 @@ const SequenceView: React.FC = () => {
                 />
               ))}
 
-              {/* Slice blocks */}
+              {/* Track items */}
               {slices.map((slice) => (
-                <SliceBlock
+                <TimelineItem
                   key={slice.id}
                   sequenceId={currentId}
                   slice={slice}
@@ -278,7 +327,7 @@ const SequenceView: React.FC = () => {
         <table className="w-full text-xs font-mono text-zinc-400">
           <thead>
             <tr className="border-b border-zinc-800 text-zinc-600">
-              <th className="text-left py-1 pr-4">Slice</th>
+              <th className="text-left py-1 pr-4">Item</th>
               <th className="text-right py-1 pr-4">Start</th>
               <th className="text-right py-1 pr-4">Duration</th>
               <th className="text-right py-1 pr-4">Src Offset</th>
@@ -294,7 +343,7 @@ const SequenceView: React.FC = () => {
                     style={{ backgroundColor: s.color }}
                   />
                   {s.label}
-                  {s.nestedSequenceId && <span className="text-zinc-600 text-[9px]">nested</span>}
+                  {s.kind === 'sequence' && <span className="text-zinc-600 text-[9px]">nested</span>}
                 </td>
                 <td className="text-right py-1 pr-4 text-orange-400">{s.startTime.toFixed(2)}s</td>
                 <td className="text-right py-1 pr-4 text-green-400">{s.duration.toFixed(2)}s</td>
