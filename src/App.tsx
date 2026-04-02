@@ -5,11 +5,13 @@ import Timeline from './components/Timeline'
 import ExportButton from './components/ExportButton'
 import AutoEditPanel from './components/AutoEditPanel'
 import ProcessingOverlay from './components/ProcessingOverlay'
+import SequenceView from './components/SequenceView'
 import { useVideoStore } from './store/videoStore'
 
 const App: React.FC = () => {
   const { videoUrl, reset } = useVideoStore()
   const [mode, setMode] = useState<'single' | 'auto'>('single')
+  const [showSequenceEditor, setShowSequenceEditor] = useState(false)
 
   return (
     <div className="min-h-screen bg-zinc-950 text-white flex flex-col">
@@ -41,6 +43,19 @@ const App: React.FC = () => {
             </button>
           )}
           <span className="text-xs text-zinc-600 font-mono">v0.1.0</span>
+          <button
+            onClick={() => setShowSequenceEditor((v) => !v)}
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg transition-colors ${
+              showSequenceEditor
+                ? 'bg-orange-500 text-white'
+                : 'text-zinc-400 hover:text-white hover:bg-zinc-800'
+            }`}
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h8M4 18h8" />
+            </svg>
+            Sequence Editor
+          </button>
         </div>
       </header>
 
@@ -48,7 +63,7 @@ const App: React.FC = () => {
       <main className="flex-1 flex flex-col">
         {!videoUrl ? (
           /* Upload state */
-          <div className="flex-1 flex items-center justify-center p-8">
+          <div className="flex-1 flex flex-col items-center p-8 gap-6">
             <div className="w-full max-w-2xl">
               <div className="text-center mb-8">
                 <h1 className="text-4xl font-bold mb-3">
@@ -89,6 +104,13 @@ const App: React.FC = () => {
 
               {mode === 'single' ? <VideoUploader /> : <AutoEditPanel />}
             </div>
+
+            {/* Sequence Editor always accessible on landing page */}
+            {showSequenceEditor && (
+              <div className="w-full max-w-4xl">
+                <SequenceView />
+              </div>
+            )}
           </div>
         ) : (
           /* Editor state */
@@ -110,6 +132,13 @@ const App: React.FC = () => {
                 </div>
               </div>
             </div>
+
+            {/* Sequence Editor panel */}
+            {showSequenceEditor && (
+              <div className="bg-zinc-900 border-t border-zinc-800 p-4">
+                <SequenceView />
+              </div>
+            )}
           </div>
         )}
       </main>
