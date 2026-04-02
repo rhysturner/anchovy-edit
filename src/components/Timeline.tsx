@@ -2,7 +2,7 @@ import React, { useRef, useCallback, useEffect } from 'react'
 import { useVideoStore } from '../store/videoStore'
 
 const Timeline: React.FC = () => {
-  const { duration, currentTime, trimStart, trimEnd, setCurrentTime, setTrimStart, setTrimEnd } =
+  const { duration, currentTime, trimStart, trimEnd, beats, setCurrentTime, setTrimStart, setTrimEnd } =
     useVideoStore()
   const trackRef = useRef<HTMLDivElement>(null)
 
@@ -88,6 +88,19 @@ const Timeline: React.FC = () => {
             width: `${trimEndPct - trimStartPct}%`,
           }}
         />
+
+        {/* Beat markers */}
+        {beats.map((beat, i) => {
+          const pct = (beat / duration) * 100
+          if (pct > 100) return null
+          return (
+            <div
+              key={i}
+              className="absolute top-0 h-full w-px bg-yellow-400/30 pointer-events-none"
+              style={{ left: `${pct}%` }}
+            />
+          )
+        })}
 
         {/* Video frames placeholder bars */}
         {Array.from({ length: 20 }, (_, i) => (

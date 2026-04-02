@@ -1,17 +1,23 @@
-import React from 'react'
+import React, { useState } from 'react'
 import VideoUploader from './components/VideoUploader'
 import VideoPreview from './components/VideoPreview'
 import Timeline from './components/Timeline'
 import ExportButton from './components/ExportButton'
+import AutoEditPanel from './components/AutoEditPanel'
+import ProcessingOverlay from './components/ProcessingOverlay'
 import { useVideoStore } from './store/videoStore'
 
 const App: React.FC = () => {
   const { videoUrl, reset } = useVideoStore()
+  const [mode, setMode] = useState<'single' | 'auto'>('single')
 
   return (
     <div className="min-h-screen bg-zinc-950 text-white flex flex-col">
+      {/* Processing overlay — shown while auto-edit is running */}
+      <ProcessingOverlay />
+
       {/* Header */}
-      <header className="flex items-center justify-between px-6 py-4 border-b border-zinc-800 bg-zinc-900/50 backdrop-blur-sm sticky top-0 z-50">
+      <header className="flex items-center justify-between px-6 py-4 border-b border-zinc-800 bg-zinc-900/50 backdrop-blur-sm sticky top-0 z-40">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 rounded-lg bg-orange-500 flex items-center justify-center">
             <svg className="w-5 h-5 text-white" fill="currentColor" viewBox="0 0 24 24">
@@ -53,7 +59,35 @@ const App: React.FC = () => {
                   Trim, preview, and export — all in your browser. No uploads to servers.
                 </p>
               </div>
-              <VideoUploader />
+
+              {/* Mode tabs */}
+              <div className="flex rounded-xl bg-zinc-800 p-1 mb-6">
+                <button
+                  onClick={() => setMode('single')}
+                  className={`flex-1 py-2 px-4 rounded-lg text-sm font-medium transition-colors ${
+                    mode === 'single'
+                      ? 'bg-zinc-700 text-white'
+                      : 'text-zinc-400 hover:text-zinc-300'
+                  }`}
+                >
+                  Single Clip
+                </button>
+                <button
+                  onClick={() => setMode('auto')}
+                  className={`flex-1 flex items-center justify-center gap-1.5 py-2 px-4 rounded-lg text-sm font-medium transition-colors ${
+                    mode === 'auto'
+                      ? 'bg-gradient-to-r from-orange-500 to-pink-600 text-white'
+                      : 'text-zinc-400 hover:text-zinc-300'
+                  }`}
+                >
+                  <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z" />
+                  </svg>
+                  AI Auto-Edit
+                </button>
+              </div>
+
+              {mode === 'single' ? <VideoUploader /> : <AutoEditPanel />}
             </div>
           </div>
         ) : (
