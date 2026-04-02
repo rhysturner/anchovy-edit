@@ -59,8 +59,6 @@ const FRAME_COUNT = 4
 const HANDLE_W = 10
 /** Minimum clip duration (seconds). */
 const MIN_DURATION = 0.1
-/** Fallback source duration (seconds) when video metadata is unavailable. */
-const DEFAULT_CLIP_DURATION = 10
 /** Hex opacity suffix: very light tint (~13 % opacity). */
 const HEX_OPACITY_LIGHT = '22'
 /** Hex opacity suffix: light tint (~20 % opacity). */
@@ -180,8 +178,9 @@ const TrimHandle: React.FC<TrimHandleProps> = ({
         if (side === 'head') {
           // Head: clamp so we don't push start past end (min duration).
           const maxTrimIn = origEnd - origStart - MIN_DURATION
-          const maxExtend = origStart // can't go below 0
-          const clamped = Math.max(-maxExtend, Math.min(maxTrimIn, deltaSec))
+          // How far back we can extend — start can't go below 0.
+          const maxMoveBack = origStart
+          const clamped = Math.max(-maxMoveBack, Math.min(maxTrimIn, deltaSec))
           let newStart = origStart + clamped
           if (syncToBeats) newStart = snapToNearestBeat(newStart, beats)
           onUpdate({ start: newStart })
@@ -527,27 +526,14 @@ const AddClipButton: React.FC<AddClipButtonProps> = ({ onAdd }) => {
     if (!file) return
 
     const url = URL.createObjectURL(file)
-    // createObjectURL always produces a blob: URL. Validate before DOM assignment
-    // to satisfy static analysis and guard against unexpected future changes.
-    if (!url.startsWith('blob:')) {
-      URL.revokeObjectURL(url)
-      return
-    }
-    // We need the video duration — load it via a transient element.
-    const vid = document.createElement('video')
-    vid.src = url
-    vid.preload = 'metadata'
-    vid.addEventListener(
-      'loadedmetadata',
-      () => {
-        const dur = isFinite(vid.duration) ? vid.duration : DEFAULT_CLIP_DURATION
-        const label = file.name.replace(/\.[^.]+$/, '')
-        onAdd(url, label, dur)
-        vid.src = ''
-      },
-      { once: true },
-    )
-    // Reset input so the same file can be re-added.
+    // Derive a human-readable label from the filename.
+    const label = file.name.replace(/\.[^.]+$/, '')
+    // Pass Infinity as source duration — the store will apply the current pace
+    // duration as the default clip length (Math.min(paceDur, Infinity) = paceDur).
+    // Precise trimming is done afterwards via the Head / Tail handles.
+    onAdd(url, label, Number.POSITIVE_INFINITY)
+
+    // Reset so the same file can be re-selected.
     if (inputRef.current) inputRef.current.value = ''
   }
 

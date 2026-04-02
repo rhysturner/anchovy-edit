@@ -93,6 +93,11 @@ export const useSortableTimelineStore = create<SortableTimelineState>()(
 
     removeClip: (id) =>
       set((state) => {
+        const clip = state.sequence.find((c) => c.id === id)
+        // Revoke the object URL to free browser memory.
+        if (clip?.videoUrl) {
+          try { URL.revokeObjectURL(clip.videoUrl) } catch { /* ignore */ }
+        }
         state.sequence = state.sequence.filter((c) => c.id !== id)
       }),
 
