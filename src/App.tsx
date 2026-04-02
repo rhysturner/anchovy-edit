@@ -6,12 +6,14 @@ import ExportButton from './components/ExportButton'
 import AutoEditPanel from './components/AutoEditPanel'
 import ProcessingOverlay from './components/ProcessingOverlay'
 import SequenceView from './components/SequenceView'
+import SortableTimeline from './components/SortableTimeline'
 import { useVideoStore } from './store/videoStore'
 
 const App: React.FC = () => {
   const { videoUrl, reset } = useVideoStore()
   const [mode, setMode] = useState<'single' | 'auto'>('single')
   const [showSequenceEditor, setShowSequenceEditor] = useState(false)
+  const [showStoryboard, setShowStoryboard] = useState(false)
 
   return (
     <div className="min-h-screen bg-zinc-950 text-white flex flex-col">
@@ -43,6 +45,19 @@ const App: React.FC = () => {
             </button>
           )}
           <span className="text-xs text-zinc-600 font-mono">v0.1.0</span>
+          <button
+            onClick={() => setShowStoryboard((v) => !v)}
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg transition-colors ${
+              showStoryboard
+                ? 'bg-orange-500 text-white'
+                : 'text-zinc-400 hover:text-white hover:bg-zinc-800'
+            }`}
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 4v16M17 4v16M3 8h4m10 0h4M3 16h4m10 0h4" />
+            </svg>
+            Storyboard
+          </button>
           <button
             onClick={() => setShowSequenceEditor((v) => !v)}
             className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg transition-colors ${
@@ -111,6 +126,13 @@ const App: React.FC = () => {
                 <SequenceView />
               </div>
             )}
+
+            {/* Storyboard always accessible on landing page */}
+            {showStoryboard && (
+              <div className="w-full max-w-5xl">
+                <SortableTimeline />
+              </div>
+            )}
           </div>
         ) : (
           /* Editor state */
@@ -137,6 +159,13 @@ const App: React.FC = () => {
             {showSequenceEditor && (
               <div className="bg-zinc-900 border-t border-zinc-800 p-4">
                 <SequenceView />
+              </div>
+            )}
+
+            {/* Storyboard panel */}
+            {showStoryboard && (
+              <div className="bg-zinc-900 border-t border-zinc-800 p-4">
+                <SortableTimeline />
               </div>
             )}
           </div>
