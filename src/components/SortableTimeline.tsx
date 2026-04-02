@@ -180,8 +180,9 @@ const TrimHandle: React.FC<TrimHandleProps> = ({
           const maxTrimIn = origEnd - origStart - MIN_DURATION
           // How far back we can extend — start can't go below 0.
           const maxMoveBack = origStart
-          const clamped = Math.max(-maxMoveBack, Math.min(maxTrimIn, deltaSec))
-          let newStart = origStart + clamped
+          // Clamp delta to the valid head-trim range: [-maxMoveBack, maxTrimIn].
+          const clampedDelta = Math.min(maxTrimIn, Math.max(-maxMoveBack, deltaSec))
+          let newStart = origStart + clampedDelta
           if (syncToBeats) newStart = snapToNearestBeat(newStart, beats)
           onUpdate({ start: newStart })
           setTooltip(`In: ${newStart.toFixed(2)}s`)
