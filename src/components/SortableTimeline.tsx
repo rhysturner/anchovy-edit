@@ -59,6 +59,18 @@ const FRAME_COUNT = 4
 const HANDLE_W = 10
 /** Minimum clip duration (seconds). */
 const MIN_DURATION = 0.1
+/** Fallback source duration (seconds) when video metadata is unavailable. */
+const DEFAULT_CLIP_DURATION = 10
+/** Hex opacity suffix: very light tint (~13 % opacity). */
+const HEX_OPACITY_LIGHT = '22'
+/** Hex opacity suffix: light tint (~20 % opacity). */
+const HEX_OPACITY_MEDIUM_LIGHT = '33'
+/** Hex opacity suffix: medium tint (~33 % opacity). */
+const HEX_OPACITY_MEDIUM = '55'
+/** Hex opacity suffix: medium-dark tint (~53 % opacity). */
+const HEX_OPACITY_MEDIUM_DARK = '88'
+/** Hex opacity suffix: card background tint (~9 % opacity). */
+const HEX_OPACITY_BG = '18'
 
 // ─── FilmstripFrames ──────────────────────────────────────────────────────────
 
@@ -81,7 +93,7 @@ const FilmstripFrames: React.FC<FilmstripFramesProps> = ({ videoUrl, color }) =>
           key={i}
           className="flex-1 h-full relative overflow-hidden"
           style={{
-            backgroundColor: color + '22',
+            backgroundColor: color + HEX_OPACITY_LIGHT,
             minWidth: 0,
           }}
         >
@@ -96,7 +108,7 @@ const FilmstripFrames: React.FC<FilmstripFramesProps> = ({ videoUrl, color }) =>
             /* Loading shimmer */
             <div
               className="absolute inset-0 animate-pulse"
-              style={{ backgroundColor: color + '33' }}
+              style={{ backgroundColor: color + HEX_OPACITY_MEDIUM_LIGHT }}
             />
           )}
         </div>
@@ -276,21 +288,21 @@ const ClipCard: React.FC<ClipCardProps> = ({
         className="relative flex flex-col rounded-md overflow-hidden"
         style={{
           border: `2px solid ${clip.color}`,
-          backgroundColor: clip.color + '18',
+          backgroundColor: clip.color + HEX_OPACITY_BG,
           height: 80,
-          boxShadow: isDragOverlay ? `0 8px 24px ${clip.color}55` : undefined,
+          boxShadow: isDragOverlay ? `0 8px 24px ${clip.color}${HEX_OPACITY_MEDIUM}` : undefined,
           opacity: isDragOverlay ? 0.95 : 1,
         }}
       >
         {/* ── Top row: index badge, label, position, remove ── */}
         <div
           className="flex items-center justify-between px-2 py-0.5 flex-shrink-0"
-          style={{ backgroundColor: clip.color + '33' }}
+          style={{ backgroundColor: clip.color + HEX_OPACITY_MEDIUM_LIGHT }}
         >
           <div className="flex items-center gap-1 min-w-0">
             <span
               className="text-[9px] font-bold px-1 rounded"
-              style={{ backgroundColor: clip.color + '55', color: clip.color }}
+              style={{ backgroundColor: clip.color + HEX_OPACITY_MEDIUM, color: clip.color }}
             >
               {String(index + 1).padStart(2, '0')}
             </span>
@@ -330,7 +342,7 @@ const ClipCard: React.FC<ClipCardProps> = ({
         {!isDragOverlay && (
           <div
             className="absolute bottom-1 left-2 text-[8px] font-mono pointer-events-none"
-            style={{ color: clip.color + '88' }}
+            style={{ color: clip.color + HEX_OPACITY_MEDIUM_DARK }}
           >
             {clip.start.toFixed(1)}→{clip.end.toFixed(1)}
           </div>
@@ -515,6 +527,12 @@ const AddClipButton: React.FC<AddClipButtonProps> = ({ onAdd }) => {
     if (!file) return
 
     const url = URL.createObjectURL(file)
+    // createObjectURL always produces a blob: URL. Validate before DOM assignment
+    // to satisfy static analysis and guard against unexpected future changes.
+    if (!url.startsWith('blob:')) {
+      URL.revokeObjectURL(url)
+      return
+    }
     // We need the video duration — load it via a transient element.
     const vid = document.createElement('video')
     vid.src = url
@@ -522,7 +540,7 @@ const AddClipButton: React.FC<AddClipButtonProps> = ({ onAdd }) => {
     vid.addEventListener(
       'loadedmetadata',
       () => {
-        const dur = isFinite(vid.duration) ? vid.duration : 10
+        const dur = isFinite(vid.duration) ? vid.duration : DEFAULT_CLIP_DURATION
         const label = file.name.replace(/\.[^.]+$/, '')
         onAdd(url, label, dur)
         vid.src = ''

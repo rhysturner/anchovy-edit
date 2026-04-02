@@ -49,11 +49,13 @@ export function useFilmstrip(videoUrl: string, frameCount = 4): string[] {
       if (!ctx) return
 
       const result: string[] = []
+      // Centre each sample within its equal-width segment so the first frame
+      // isn't always at t=0 (often a blank slate) and the last isn't at EOF.
+      const FRAME_CENTER_OFFSET = 0.5
 
       for (let i = 0; i < frameCount; i++) {
         if (cancelled) return
-        // Sample evenly across the video, centred within each segment.
-        const time = (duration / frameCount) * (i + 0.5)
+        const time = (duration / frameCount) * (i + FRAME_CENTER_OFFSET)
         await new Promise<void>((resolve) => {
           const onSeeked = () => resolve()
           video.addEventListener('seeked', onSeeked, { once: true })
