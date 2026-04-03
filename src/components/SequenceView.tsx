@@ -1,7 +1,8 @@
-import React, { useRef } from 'react'
+import React, { useRef, useCallback, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { useSequenceStore, TrackItem } from '../store/sequenceStore'
+import { useSequenceStore, TrackItem, MIN_SPLIT_MARGIN } from '../store/sequenceStore'
 import { useTrim, formatDelta, formatTimestamp } from '../hooks/useTrim'
+import { getCurrentClip } from '../utils/sequenceUtils'
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -225,19 +226,95 @@ const Ruler: React.FC<RulerProps> = ({ totalSeconds }) => {
  * and a "Back" button.  Double-clicking a SequenceItem drills into it by
  * pushing its ID onto the navigation history.  Clicking any ancestor in the
  * breadcrumb trail navigates directly back to that level.
+ *
+ * Features:
+ * - Magnetic Storyboard: tail-trim ripples subsequent clips (no gaps).
+ * - Scrubable Playhead: click the ruler or drag the playhead line to seek.
+ * - Split Tool: ✂ Split button cuts the active clip at the playhead position.
  */
 const SequenceView: React.FC = () => {
-  const { sequences, navigationHistory, pushNavigation, popNavigation, navigateTo, trimPreviewTime } =
-    useSequenceStore()
+  const {
+    sequences,
+    navigationHistory,
+    pushNavigation,
+    popNavigation,
+    navigateTo,
+    trimPreviewTime,
+    playheadTime,
+    setPlayheadTime,
+    splitClip,
+  } = useSequenceStore()
+
   const scrollRef = useRef<HTMLDivElement>(null)
+  /** Inner (non-scrolled) content div — used for pixel→time calculations. */
+  const innerRef = useRef<HTMLDivElement>(null)
+  /** Stable ref so drag handlers never hold stale totalSeconds values. */
+  const totalSecondsRef = useRef(0)
 
   const currentId = navigationHistory[navigationHistory.length - 1]
   const currentSequence = sequences[currentId]
 
-  if (!currentSequence) return null
-
-  const slices = currentSequence.slices
+  // Derive slices safely (may be empty before currentSequence is confirmed)
+  const slices = currentSequence?.slices ?? []
   const totalSeconds = slices.reduce((max, s) => Math.max(max, s.startTime + s.duration), 0) + 2
+  totalSecondsRef.current = totalSeconds
+
+  const { clip: activeClip } = getCurrentClip(slices, playheadTime)
+  const canSplit =
+    activeClip !== null &&
+    playheadTime > activeClip.startTime + MIN_SPLIT_MARGIN &&
+    playheadTime < activeClip.startTime + activeClip.duration - MIN_SPLIT_MARGIN
+
+  // ── Playhead pointer-move handler (created once, reads from refs) ──────────
+
+  const handlePlayheadPointerDown = useCallback(
+    (e: React.PointerEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+      const target = e.currentTarget as HTMLElement
+      target.setPointerCapture(e.pointerId)
+      const pointerId = e.pointerId
+
+      const handleMove = (ev: PointerEvent) => {
+        const inner = innerRef.current
+        if (!inner) return
+        const rect = inner.getBoundingClientRect()
+        const x = ev.clientX - rect.left
+        const t = Math.max(0, Math.min(totalSecondsRef.current, x / PX_PER_SECOND))
+        setPlayheadTime(t)
+      }
+      const handleUp = (ev: PointerEvent) => {
+        target.releasePointerCapture(ev.pointerId ?? pointerId)
+        window.removeEventListener('pointermove', handleMove)
+        window.removeEventListener('pointerup', handleUp)
+      }
+      window.addEventListener('pointermove', handleMove)
+      window.addEventListener('pointerup', handleUp)
+    },
+    [setPlayheadTime],
+  )
+
+  // ── Seek on ruler / track background click ─────────────────────────────────
+
+  const seekFromClientX = useCallback(
+    (clientX: number) => {
+      const inner = innerRef.current
+      if (!inner) return
+      const rect = inner.getBoundingClientRect()
+      const x = clientX - rect.left
+      setPlayheadTime(Math.max(0, Math.min(totalSecondsRef.current, x / PX_PER_SECOND)))
+    },
+    [setPlayheadTime],
+  )
+
+  // Keep playheadTime clamped when the sequence shrinks
+  useEffect(() => {
+    if (playheadTime > totalSeconds) {
+      setPlayheadTime(totalSeconds)
+    }
+  }, [totalSeconds, playheadTime, setPlayheadTime])
+
+  if (!currentSequence) return null
 
   const handleDoubleClick = (slice: TrackItem) => {
     if (slice.kind === 'sequence' && sequences[slice.nestedSequenceId]) {
@@ -245,10 +322,12 @@ const SequenceView: React.FC = () => {
     }
   }
 
+  const playheadLeft = playheadTime * PX_PER_SECOND
+
   return (
     <div className="flex flex-col gap-3 w-full bg-zinc-900 rounded-xl border border-zinc-800 p-4">
       {/* ── Header ── */}
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3 flex-wrap">
         {navigationHistory.length > 1 && (
           <button
             onClick={popNavigation}
@@ -266,11 +345,34 @@ const SequenceView: React.FC = () => {
           labelFor={(id) => sequences[id]?.label ?? id}
           onNavigateTo={navigateTo}
         />
+
+        <div className="ml-auto flex items-center gap-2">
+          {/* Playhead timestamp */}
+          <span className="text-[10px] font-mono text-orange-400 bg-zinc-800 px-2 py-0.5 rounded select-none">
+            ▶ {formatTimestamp(playheadTime)}
+          </span>
+
+          {/* Split button */}
+          <button
+            onClick={() => activeClip && splitClip(currentId, activeClip.id, playheadTime)}
+            disabled={!canSplit}
+            title={canSplit ? `Split "${activeClip!.label}" at ${formatTimestamp(playheadTime)}` : 'Playhead must be on a clip to split'}
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg transition-colors ${
+              canSplit
+                ? 'bg-zinc-700 text-white hover:bg-zinc-600'
+                : 'text-zinc-600 cursor-not-allowed'
+            }`}
+          >
+            ✂ Split
+          </button>
+        </div>
       </div>
 
       {/* ── Hint ── */}
       <div className="flex items-center justify-between">
         <p className="text-[11px] text-zinc-600">
+          Click the ruler or drag the{' '}
+          <span className="text-zinc-400">▷ playhead</span> to seek.
           Drag <span className="text-zinc-400">◀ Head</span> or{' '}
           <span className="text-zinc-400">Tail ▶</span> handles to precision-trim.
           {slices.some((s) => s.kind === 'sequence') && (
@@ -286,8 +388,27 @@ const SequenceView: React.FC = () => {
 
       {/* ── Timeline ruler + track ── */}
       <div ref={scrollRef} className="overflow-x-auto pb-2">
-        <div style={{ width: totalSeconds * PX_PER_SECOND, minWidth: '100%' }}>
-          <Ruler totalSeconds={totalSeconds} />
+        {/* Inner container — reference point for pixel→time math */}
+        <div ref={innerRef} style={{ width: totalSeconds * PX_PER_SECOND, minWidth: '100%', position: 'relative' }}>
+          {/* ── Playhead line (spans full height of ruler + track) ── */}
+          <div
+            className="absolute top-0 bottom-0 w-px bg-white/50 z-20 pointer-events-none"
+            style={{ left: playheadLeft }}
+          />
+          {/* Playhead handle (draggable circle at the top) */}
+          <div
+            className="absolute z-30 w-3.5 h-3.5 bg-white rounded-full cursor-ew-resize touch-none shadow-lg"
+            style={{ left: playheadLeft, top: 0, transform: 'translate(-50%, -10%)' }}
+            onPointerDown={handlePlayheadPointerDown}
+          />
+
+          {/* ── Ruler (click to seek) ── */}
+          <div
+            className="cursor-pointer"
+            onClick={(e) => seekFromClientX(e.clientX)}
+          >
+            <Ruler totalSeconds={totalSeconds} />
+          </div>
 
           <AnimatePresence mode="wait">
             <motion.div
@@ -296,8 +417,12 @@ const SequenceView: React.FC = () => {
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -8 }}
               transition={{ duration: 0.2 }}
-              className="relative bg-zinc-800 rounded-lg overflow-visible"
+              className="relative bg-zinc-800 rounded-lg overflow-visible cursor-pointer"
               style={{ height: TRACK_HEIGHT }}
+              onClick={(e) => {
+                // Seek when clicking the track background (not a clip)
+                if (e.target === e.currentTarget) seekFromClientX(e.clientX)
+              }}
             >
               {/* Grid lines */}
               {Array.from({ length: Math.ceil(totalSeconds / RULER_TICK_INTERVAL) + 1 }, (_, i) => (
@@ -336,7 +461,7 @@ const SequenceView: React.FC = () => {
           </thead>
           <tbody>
             {slices.map((s) => (
-              <tr key={s.id} className="border-b border-zinc-800/50">
+              <tr key={s.id} className={`border-b border-zinc-800/50 ${activeClip?.id === s.id ? 'bg-zinc-800/50' : ''}`}>
                 <td className="py-1 pr-4 flex items-center gap-1.5">
                   <span
                     className="inline-block w-2 h-2 rounded-full flex-shrink-0"
@@ -344,6 +469,7 @@ const SequenceView: React.FC = () => {
                   />
                   {s.label}
                   {s.kind === 'sequence' && <span className="text-zinc-600 text-[9px]">nested</span>}
+                  {activeClip?.id === s.id && <span className="text-orange-400 text-[9px]">◀ active</span>}
                 </td>
                 <td className="text-right py-1 pr-4 text-orange-400">{s.startTime.toFixed(2)}s</td>
                 <td className="text-right py-1 pr-4 text-green-400">{s.duration.toFixed(2)}s</td>

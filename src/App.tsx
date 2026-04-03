@@ -6,12 +6,18 @@ import ExportButton from './components/ExportButton'
 import AutoEditPanel from './components/AutoEditPanel'
 import ProcessingOverlay from './components/ProcessingOverlay'
 import SequenceView from './components/SequenceView'
+import Storyboard from './components/Storyboard'
+import StoryboardPreview from './components/StoryboardPreview'
 import { useVideoStore } from './store/videoStore'
+import { useStoryboardStore } from './store/storyboardStore'
 
 const App: React.FC = () => {
   const { videoUrl, reset } = useVideoStore()
+  const { storyboardClips } = useStoryboardStore()
   const [mode, setMode] = useState<'single' | 'auto'>('single')
   const [showSequenceEditor, setShowSequenceEditor] = useState(false)
+  const [showStoryboard, setShowStoryboard] = useState(false)
+  const [activeClipIndex, setActiveClipIndex] = useState(0)
 
   return (
     <div className="min-h-screen bg-zinc-950 text-white flex flex-col">
@@ -43,6 +49,24 @@ const App: React.FC = () => {
             </button>
           )}
           <span className="text-xs text-zinc-600 font-mono">v0.1.0</span>
+          <button
+            onClick={() => setShowStoryboard((v) => !v)}
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg transition-colors ${
+              showStoryboard
+                ? 'bg-orange-500 text-white'
+                : 'text-zinc-400 hover:text-white hover:bg-zinc-800'
+            }`}
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" />
+            </svg>
+            Storyboard
+            {storyboardClips.length > 0 && (
+              <span className="ml-1 bg-white/20 rounded-full px-1.5 py-0.5 text-xs leading-none">
+                {storyboardClips.length}
+              </span>
+            )}
+          </button>
           <button
             onClick={() => setShowSequenceEditor((v) => !v)}
             className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg transition-colors ${
@@ -105,6 +129,16 @@ const App: React.FC = () => {
               {mode === 'single' ? <VideoUploader /> : <AutoEditPanel />}
             </div>
 
+            {/* Storyboard panel on the landing page */}
+            {showStoryboard && (
+              <div className="w-full max-w-4xl flex flex-col gap-4">
+                {storyboardClips.length > 0 && (
+                  <StoryboardPreview onActiveClipChange={setActiveClipIndex} />
+                )}
+                <Storyboard activeClipIndex={activeClipIndex} />
+              </div>
+            )}
+
             {/* Sequence Editor always accessible on landing page */}
             {showSequenceEditor && (
               <div className="w-full max-w-4xl">
@@ -118,13 +152,17 @@ const App: React.FC = () => {
             {/* Preview area */}
             <div className="flex-1 flex items-center justify-center p-6 bg-zinc-950">
               <div className="w-full max-w-4xl">
-                <VideoPreview />
+                {storyboardClips.length > 0 && showStoryboard ? (
+                  <StoryboardPreview onActiveClipChange={setActiveClipIndex} />
+                ) : (
+                  <VideoPreview />
+                )}
               </div>
             </div>
 
             {/* Bottom panel */}
             <div className="bg-zinc-900 border-t border-zinc-800 p-4 flex flex-col gap-4">
-              <Timeline />
+              {!showStoryboard && <Timeline />}
               <div className="flex items-center justify-between gap-4">
                 <div className="flex-1" />
                 <div className="w-64">
@@ -132,6 +170,13 @@ const App: React.FC = () => {
                 </div>
               </div>
             </div>
+
+            {/* Storyboard panel */}
+            {showStoryboard && (
+              <div className="bg-zinc-900 border-t border-zinc-800 p-4">
+                <Storyboard activeClipIndex={activeClipIndex} />
+              </div>
+            )}
 
             {/* Sequence Editor panel */}
             {showSequenceEditor && (
