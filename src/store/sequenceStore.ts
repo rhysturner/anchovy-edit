@@ -76,6 +76,17 @@ interface SequenceState {
   setPlayheadTime: (time: number) => void
 }
 
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+/** Minimum clip duration (seconds). Clips cannot be trimmed shorter than this. */
+const MIN_CLIP_DURATION = 0.1
+/**
+ * Minimum distance (seconds) from a clip boundary when splitting.
+ * Prevents creating zero-length or near-zero-length clips at the edges.
+ * Exported so UI components can apply the same guard when enabling the Split button.
+ */
+export const MIN_SPLIT_MARGIN = 0.05
+
 // ─── Seed Data ────────────────────────────────────────────────────────────────
 
 export const ROOT_SEQUENCE_ID = 'root'
@@ -143,8 +154,9 @@ export const useSequenceStore = create<SequenceState>()(
         const idx = seq.slices.findIndex((s) => s.id === sliceId)
         if (idx === -1) return
         const slice = seq.slices[idx]
-        const delta = newDuration - slice.duration
-        slice.duration = parseFloat(newDuration.toFixed(3))
+        const safeNewDuration = Math.max(MIN_CLIP_DURATION, newDuration)
+        const delta = safeNewDuration - slice.duration
+        slice.duration = parseFloat(safeNewDuration.toFixed(3))
         // Ripple: shift every clip that comes after this one
         for (let i = idx + 1; i < seq.slices.length; i++) {
           seq.slices[i].startTime = parseFloat((seq.slices[i].startTime + delta).toFixed(3))
@@ -160,7 +172,7 @@ export const useSequenceStore = create<SequenceState>()(
         const clip = seq.slices[idx]
         const localTime = atTime - clip.startTime
         // Guard: split point must be strictly inside the clip
-        if (localTime <= 0.05 || localTime >= clip.duration - 0.05) return
+        if (localTime <= MIN_SPLIT_MARGIN || localTime >= clip.duration - MIN_SPLIT_MARGIN) return
 
         const leftClip: TrackItem = {
           ...clip,

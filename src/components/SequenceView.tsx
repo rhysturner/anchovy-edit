@@ -1,6 +1,6 @@
 import React, { useRef, useCallback, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { useSequenceStore, TrackItem } from '../store/sequenceStore'
+import { useSequenceStore, TrackItem, MIN_SPLIT_MARGIN } from '../store/sequenceStore'
 import { useTrim, formatDelta, formatTimestamp } from '../hooks/useTrim'
 import { getCurrentClip } from '../utils/sequenceUtils'
 
@@ -262,8 +262,8 @@ const SequenceView: React.FC = () => {
   const { clip: activeClip } = getCurrentClip(slices, playheadTime)
   const canSplit =
     activeClip !== null &&
-    playheadTime > activeClip.startTime + 0.05 &&
-    playheadTime < activeClip.startTime + activeClip.duration - 0.05
+    playheadTime > activeClip.startTime + MIN_SPLIT_MARGIN &&
+    playheadTime < activeClip.startTime + activeClip.duration - MIN_SPLIT_MARGIN
 
   // ── Playhead pointer-move handler (created once, reads from refs) ──────────
 
@@ -271,7 +271,9 @@ const SequenceView: React.FC = () => {
     (e: React.PointerEvent) => {
       e.preventDefault()
       e.stopPropagation()
-      ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+      const target = e.currentTarget as HTMLElement
+      target.setPointerCapture(e.pointerId)
+      const pointerId = e.pointerId
 
       const handleMove = (ev: PointerEvent) => {
         const inner = innerRef.current
@@ -281,7 +283,8 @@ const SequenceView: React.FC = () => {
         const t = Math.max(0, Math.min(totalSecondsRef.current, x / PX_PER_SECOND))
         setPlayheadTime(t)
       }
-      const handleUp = () => {
+      const handleUp = (ev: PointerEvent) => {
+        target.releasePointerCapture(ev.pointerId ?? pointerId)
         window.removeEventListener('pointermove', handleMove)
         window.removeEventListener('pointerup', handleUp)
       }
@@ -353,7 +356,7 @@ const SequenceView: React.FC = () => {
           <button
             onClick={() => activeClip && splitClip(currentId, activeClip.id, playheadTime)}
             disabled={!canSplit}
-            title={canSplit ? `Split "${activeClip?.label}" at ${formatTimestamp(playheadTime)}` : 'Playhead must be on a clip to split'}
+            title={canSplit ? `Split "${activeClip!.label}" at ${formatTimestamp(playheadTime)}` : 'Playhead must be on a clip to split'}
             className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg transition-colors ${
               canSplit
                 ? 'bg-zinc-700 text-white hover:bg-zinc-600'
