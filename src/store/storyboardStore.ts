@@ -49,7 +49,10 @@ interface StoryboardState {
   updateClipTrim: (id: string, trimStart: number, trimEnd: number) => void
 }
 
-// ─── Store ────────────────────────────────────────────────────────────────────
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+/** Minimum playable clip duration (seconds). Clips cannot be trimmed shorter than this. */
+const MIN_CLIP_DURATION = 0.1
 
 export const useStoryboardStore = create<StoryboardState>()(
   immer((set) => ({
@@ -79,7 +82,7 @@ export const useStoryboardStore = create<StoryboardState>()(
         const clip = state.storyboardClips.find((c) => c.id === id)
         if (!clip) return
         const safeStart = Math.max(0, Math.min(trimStart, clip.sourceDuration))
-        const safeEnd = Math.max(safeStart + 0.1, Math.min(trimEnd, clip.sourceDuration))
+        const safeEnd = Math.max(safeStart + MIN_CLIP_DURATION, Math.min(trimEnd, clip.sourceDuration))
         clip.trimStart = parseFloat(safeStart.toFixed(3))
         clip.trimEnd = parseFloat(safeEnd.toFixed(3))
         clip.duration = parseFloat((safeEnd - safeStart).toFixed(3))

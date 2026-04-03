@@ -1,6 +1,11 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react'
 import { StoryboardClip } from '../store/storyboardStore'
 
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+/** Minimum clip duration (seconds). Trim handles cannot go closer than this. */
+const MIN_CLIP_DURATION = 0.1
+
 // ─── Props ────────────────────────────────────────────────────────────────────
 
 interface TrimModalProps {
@@ -36,16 +41,24 @@ const TrimModal: React.FC<TrimModalProps> = ({ clip, onClose, onDone }) => {
   const [currentTime, setCurrentTime] = useState(clip.trimStart)
   const [isPlaying, setIsPlaying] = useState(false)
 
-  // Seek video when trim handles move
-  useEffect(() => {
-    const v = videoRef.current
-    if (v) v.currentTime = trimStart
-  }, [trimStart])
+  /**
+   * Track which handle was most recently moved so we can seek to the
+   * appropriate point without double-seeking when both sliders fire
+   * state updates in the same render cycle.
+   */
+  const lastMovedHandle = useRef<'start' | 'end' | null>(null)
 
+  // Seek video when a trim handle moves (combined effect to avoid double-seek)
   useEffect(() => {
     const v = videoRef.current
-    if (v) v.currentTime = trimEnd
-  }, [trimEnd])
+    if (!v || lastMovedHandle.current === null) return
+    const target = lastMovedHandle.current === 'start' ? trimStart : trimEnd
+    // Only seek if the video is not already at this position to avoid loops
+    if (Math.abs(v.currentTime - target) > 0.02) {
+      v.currentTime = target
+    }
+    lastMovedHandle.current = null
+  }, [trimStart, trimEnd])
 
   // Enforce trim region during playback
   const handleTimeUpdate = useCallback(() => {
@@ -185,7 +198,10 @@ const TrimModal: React.FC<TrimModalProps> = ({ clip, onClose, onDone }) => {
               value={trimStart}
               onChange={(e) => {
                 const v = parseFloat(e.target.value)
-                if (v < trimEnd - 0.1) setTrimStart(v)
+                if (v < trimEnd - MIN_CLIP_DURATION) {
+                  lastMovedHandle.current = 'start'
+                  setTrimStart(v)
+                }
               }}
               className="flex-1 accent-orange-500"
             />
@@ -205,7 +221,10 @@ const TrimModal: React.FC<TrimModalProps> = ({ clip, onClose, onDone }) => {
               value={trimEnd}
               onChange={(e) => {
                 const v = parseFloat(e.target.value)
-                if (v > trimStart + 0.1) setTrimEnd(v)
+                if (v > trimStart + MIN_CLIP_DURATION) {
+                  lastMovedHandle.current = 'end'
+                  setTrimEnd(v)
+                }
               }}
               className="flex-1 accent-orange-500"
             />

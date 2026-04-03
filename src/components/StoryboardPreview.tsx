@@ -1,7 +1,14 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react'
 import { useStoryboardStore, StoryboardClip } from '../store/storyboardStore'
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+/**
+ * Seconds before the clip's trimEnd at which we treat the clip as "finished"
+ * and switch to the next one.  A small lookahead prevents missing the boundary
+ * due to `timeupdate` event granularity.
+ */
+const CLIP_BOUNDARY_TOLERANCE = 0.05
 
 function formatTime(sec: number): string {
   const m = Math.floor(sec / 60)
@@ -126,7 +133,7 @@ const StoryboardPreview: React.FC<StoryboardPreviewProps> = ({ onActiveClipChang
     }
 
     // Has the clip reached its trim out-point?
-    if (v.currentTime >= clip.trimEnd - 0.05) {
+    if (v.currentTime >= clip.trimEnd - CLIP_BOUNDARY_TOLERANCE) {
       const nextIdx = idx + 1
       if (nextIdx < clips.length) {
         // Switch to next clip
@@ -157,7 +164,7 @@ const StoryboardPreview: React.FC<StoryboardPreviewProps> = ({ onActiveClipChang
       setIsPlaying(false)
     } else {
       // If we are at or past the end, restart from the beginning
-      if (globalTime >= totalDuration - 0.05) {
+      if (globalTime >= totalDuration - CLIP_BOUNDARY_TOLERANCE) {
         clipStartOffsetRef.current = 0
         setGlobalTime(0)
         setActiveClipIndex(0)
