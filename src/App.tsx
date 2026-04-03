@@ -6,6 +6,7 @@ import ExportButton from './components/ExportButton'
 import AutoEditPanel from './components/AutoEditPanel'
 import ProcessingOverlay from './components/ProcessingOverlay'
 import SequenceView from './components/SequenceView'
+import SortableTimeline from './components/SortableTimeline'
 import Storyboard from './components/Storyboard'
 import StoryboardPreview from './components/StoryboardPreview'
 import { useVideoStore } from './store/videoStore'
@@ -145,6 +146,13 @@ const App: React.FC = () => {
                 <SequenceView />
               </div>
             )}
+
+            {/* Storyboard always accessible on landing page */}
+            {showStoryboard && (
+              <div className="w-full max-w-5xl">
+                <SortableTimeline />
+              </div>
+            )}
           </div>
         ) : (
           /* Editor state */
@@ -182,6 +190,13 @@ const App: React.FC = () => {
             {showSequenceEditor && (
               <div className="bg-zinc-900 border-t border-zinc-800 p-4">
                 <SequenceView />
+              </div>
+            )}
+
+            {/* Storyboard panel */}
+            {showStoryboard && (
+              <div className="bg-zinc-900 border-t border-zinc-800 p-4">
+                <SortableTimeline />
               </div>
             )}
           </div>
