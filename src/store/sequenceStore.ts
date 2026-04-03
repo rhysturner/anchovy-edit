@@ -52,15 +52,40 @@ interface SequenceState {
   navigationHistory: string[]
   /** Absolute source timestamp (seconds) being previewed while trimming, or null when idle. */
   trimPreviewTime: number | null
+  /** Global playhead position (seconds) on the currently-viewed sequence timeline. */
+  playheadTime: number
 
   addSequence: (sequence: Sequence) => void
   updateSlice: (sequenceId: string, sliceId: string, updates: Partial<TrackItem>) => void
+  /**
+   * Tail-trim a clip to `newDuration` and immediately ripple all subsequent
+   * clips left or right so there are never any gaps (Magnetic Storyboard).
+   */
+  tailTrimSlice: (sequenceId: string, sliceId: string, newDuration: number) => void
+  /**
+   * Split a clip at `atTime` (absolute sequence seconds) into two clips.
+   * The left clip retains the original id with "-a" suffix; the right gets "-b".
+   * Does nothing when `atTime` is at or outside the clip's boundaries.
+   */
+  splitClip: (sequenceId: string, sliceId: string, atTime: number) => void
   pushNavigation: (sequenceId: string) => void
   popNavigation: () => void
   /** Jump directly to a sequence that is already in the history (truncates forward entries). */
   navigateTo: (sequenceId: string) => void
   setTrimPreviewTime: (time: number | null) => void
+  setPlayheadTime: (time: number) => void
 }
+
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+/** Minimum clip duration (seconds). Clips cannot be trimmed shorter than this. */
+const MIN_CLIP_DURATION = 0.1
+/**
+ * Minimum distance (seconds) from a clip boundary when splitting.
+ * Prevents creating zero-length or near-zero-length clips at the edges.
+ * Exported so UI components can apply the same guard when enabling the Split button.
+ */
+export const MIN_SPLIT_MARGIN = 0.05
 
 // ─── Seed Data ────────────────────────────────────────────────────────────────
 
@@ -106,6 +131,7 @@ export const useSequenceStore = create<SequenceState>()(
     },
     navigationHistory: [ROOT_SEQUENCE_ID],
     trimPreviewTime: null,
+    playheadTime: 0,
 
     addSequence: (sequence) =>
       set((state) => {
@@ -119,6 +145,49 @@ export const useSequenceStore = create<SequenceState>()(
         const idx = seq.slices.findIndex((s) => s.id === sliceId)
         if (idx === -1) return
         Object.assign(seq.slices[idx], updates)
+      }),
+
+    tailTrimSlice: (sequenceId, sliceId, newDuration) =>
+      set((state) => {
+        const seq = state.sequences[sequenceId]
+        if (!seq) return
+        const idx = seq.slices.findIndex((s) => s.id === sliceId)
+        if (idx === -1) return
+        const slice = seq.slices[idx]
+        const safeNewDuration = Math.max(MIN_CLIP_DURATION, newDuration)
+        const delta = safeNewDuration - slice.duration
+        slice.duration = parseFloat(safeNewDuration.toFixed(3))
+        // Ripple: shift every clip that comes after this one
+        for (let i = idx + 1; i < seq.slices.length; i++) {
+          seq.slices[i].startTime = parseFloat((seq.slices[i].startTime + delta).toFixed(3))
+        }
+      }),
+
+    splitClip: (sequenceId, sliceId, atTime) =>
+      set((state) => {
+        const seq = state.sequences[sequenceId]
+        if (!seq) return
+        const idx = seq.slices.findIndex((s) => s.id === sliceId)
+        if (idx === -1) return
+        const clip = seq.slices[idx]
+        const localTime = atTime - clip.startTime
+        // Guard: split point must be strictly inside the clip
+        if (localTime <= MIN_SPLIT_MARGIN || localTime >= clip.duration - MIN_SPLIT_MARGIN) return
+
+        const leftClip: TrackItem = {
+          ...clip,
+          id: `${clip.id}-a`,
+          duration: parseFloat(localTime.toFixed(3)),
+        }
+        const rightClip: TrackItem = {
+          ...clip,
+          id: `${clip.id}-b`,
+          startTime: parseFloat(atTime.toFixed(3)),
+          duration: parseFloat((clip.duration - localTime).toFixed(3)),
+          sourceOffset: parseFloat((clip.sourceOffset + localTime).toFixed(3)),
+        }
+
+        seq.slices.splice(idx, 1, leftClip, rightClip)
       }),
 
     pushNavigation: (sequenceId) =>
@@ -144,6 +213,11 @@ export const useSequenceStore = create<SequenceState>()(
     setTrimPreviewTime: (time) =>
       set((state) => {
         state.trimPreviewTime = time
+      }),
+
+    setPlayheadTime: (time) =>
+      set((state) => {
+        state.playheadTime = time
       }),
   })),
 )

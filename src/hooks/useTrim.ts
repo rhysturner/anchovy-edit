@@ -59,6 +59,7 @@ interface UseTrimReturn {
  */
 export function useTrim({ sequenceId, slice, pxPerSecond, onTrimPreview }: UseTrimOptions): UseTrimReturn {
   const updateSlice = useSequenceStore((s) => s.updateSlice)
+  const tailTrimSlice = useSequenceStore((s) => s.tailTrimSlice)
   const headX = useMotionValue(0)
   const tailX = useMotionValue(0)
 
@@ -133,12 +134,10 @@ export function useTrim({ sequenceId, slice, pxPerSecond, onTrimPreview }: UseTr
           })
           onTrimPreview?.(parseFloat(newSourceOffset.toFixed(3)))
         } else {
-          // Tail trim: only duration changes.
+          // Tail trim: only duration changes — use tailTrimSlice for ripple.
           const newDuration = Math.max(0.1, origDuration + deltaSec)
           const tailTimestamp = parseFloat((origSourceOffset + newDuration).toFixed(3))
-          updateSlice(sequenceId, slice.id, {
-            duration: parseFloat(newDuration.toFixed(3)),
-          })
+          tailTrimSlice(sequenceId, slice.id, parseFloat(newDuration.toFixed(3)))
           motionVal.set(deltaPx)
           setDragState({
             isDragging: true,
@@ -163,7 +162,7 @@ export function useTrim({ sequenceId, slice, pxPerSecond, onTrimPreview }: UseTr
       window.addEventListener('pointermove', handleMove)
       window.addEventListener('pointerup', handleUp)
     },
-    [headX, tailX, pxPerSecond, sequenceId, slice, updateSlice, onTrimPreview],
+    [headX, tailX, pxPerSecond, sequenceId, slice, updateSlice, tailTrimSlice, onTrimPreview],
   )
 
   const onHeadPointerDown = useCallback(
