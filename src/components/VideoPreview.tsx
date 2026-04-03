@@ -1,5 +1,7 @@
 import React, { useEffect, useRef, useCallback } from 'react'
 import { useVideoStore } from '../store/videoStore'
+import { useSequenceStore } from '../store/sequenceStore'
+import { getCurrentClip } from '../utils/sequenceUtils'
 
 const VideoPreview: React.FC = () => {
   const {
@@ -12,7 +14,37 @@ const VideoPreview: React.FC = () => {
     setIsPlaying,
     currentTime,
   } = useVideoStore()
+
+  const { trimPreviewTime, playheadTime, sequences, navigationHistory } = useSequenceStore()
+
   const videoRef = useRef<HTMLVideoElement>(null)
+
+  // Stable refs so seek effects don't hold stale sequence data
+  const sequencesRef = useRef(sequences)
+  const navHistoryRef = useRef(navigationHistory)
+  useEffect(() => { sequencesRef.current = sequences }, [sequences])
+  useEffect(() => { navHistoryRef.current = navigationHistory }, [navigationHistory])
+
+  // ── Seek: trim preview (highest priority) ─────────────────────────────────
+  useEffect(() => {
+    if (trimPreviewTime === null) return
+    const v = videoRef.current
+    if (v) v.currentTime = trimPreviewTime
+  }, [trimPreviewTime])
+
+  // ── Seek: global playhead scrubbing ───────────────────────────────────────
+  // Fires when playheadTime changes OR when trimPreviewTime becomes null
+  // (so we snap back to the playhead position after a trim drag ends).
+  useEffect(() => {
+    if (trimPreviewTime !== null) return // trim preview takes priority
+    const v = videoRef.current
+    if (!v) return
+    const currentSeqId = navHistoryRef.current[navHistoryRef.current.length - 1]
+    const seq = sequencesRef.current[currentSeqId]
+    if (!seq) return
+    const { internalTime } = getCurrentClip(seq.slices, playheadTime)
+    v.currentTime = internalTime
+  }, [playheadTime, trimPreviewTime])
 
   useEffect(() => {
     const video = videoRef.current
