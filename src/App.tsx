@@ -9,6 +9,7 @@ import SequenceView from './components/SequenceView'
 import SortableTimeline from './components/SortableTimeline'
 import Storyboard from './components/Storyboard'
 import StoryboardPreview from './components/StoryboardPreview'
+import NodeEditor from './components/NodeEditor'
 import { useVideoStore } from './store/videoStore'
 import { useStoryboardStore } from './store/storyboardStore'
 
@@ -18,6 +19,7 @@ const App: React.FC = () => {
   const [mode, setMode] = useState<'single' | 'auto'>('single')
   const [showSequenceEditor, setShowSequenceEditor] = useState(false)
   const [showStoryboard, setShowStoryboard] = useState(false)
+  const [showNodeEditor, setShowNodeEditor] = useState(false)
   const [activeClipIndex, setActiveClipIndex] = useState(0)
 
   return (
@@ -81,8 +83,57 @@ const App: React.FC = () => {
             </svg>
             Sequence Editor
           </button>
+          <button
+            onClick={() => setShowNodeEditor((v) => !v)}
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg transition-colors ${
+              showNodeEditor
+                ? 'bg-orange-500 text-white'
+                : 'text-zinc-400 hover:text-white hover:bg-zinc-800'
+            }`}
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <circle cx="5" cy="12" r="2" fill="currentColor" />
+              <circle cx="19" cy="5" r="2" fill="currentColor" />
+              <circle cx="19" cy="19" r="2" fill="currentColor" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 12h5m2-5h2M14 19h2M12 12l5-5M12 12l5 5" />
+            </svg>
+            Node Editor
+          </button>
         </div>
       </header>
+
+      {/* Node Editor full-screen overlay */}
+      {showNodeEditor && (
+        <div className="fixed inset-0 z-30 bg-zinc-950 flex flex-col">
+          {/* Overlay header */}
+          <div className="flex items-center justify-between px-4 py-2 border-b border-zinc-800 bg-[#161616] flex-shrink-0">
+            <div className="flex items-center gap-2">
+              <div className="w-6 h-6 rounded bg-orange-500 flex items-center justify-center">
+                <svg className="w-4 h-4 text-white" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M15 10l4.553-2.069A1 1 0 0121 8.868V15.13a1 1 0 01-1.447.9L15 14M3 8a2 2 0 012-2h10a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z" />
+                </svg>
+              </div>
+              <span className="text-sm font-bold text-white">
+                anchovy<span className="text-orange-500">edit</span>
+                <span className="text-zinc-500 font-normal ml-2">— Node Editor</span>
+              </span>
+            </div>
+            <button
+              onClick={() => setShowNodeEditor(false)}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-lg transition-colors"
+              aria-label="Close Node Editor"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+              Close
+            </button>
+          </div>
+          <div className="flex-1 overflow-hidden">
+            <NodeEditor />
+          </div>
+        </div>
+      )}
 
       {/* Main content */}
       <main className="flex-1 flex flex-col">
