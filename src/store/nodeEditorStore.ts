@@ -121,7 +121,7 @@ export const useNodeEditorStore = create<NodeEditorState>()(
 
     addClipNode: (clipData, position) =>
       set((state) => {
-        const id = Math.random().toString(36).slice(2, 10)
+        const id = crypto.randomUUID()
         const newNode: Node<ClipNodeData> = {
           id,
           type: 'clipNode',
@@ -133,7 +133,7 @@ export const useNodeEditorStore = create<NodeEditorState>()(
 
     addSequenceNode: (position) =>
       set((state) => {
-        const id = Math.random().toString(36).slice(2, 10)
+        const id = crypto.randomUUID()
         const newNode: Node<SequenceNodeData> = {
           id,
           type: 'sequenceNode',
