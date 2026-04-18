@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sharp Studio</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: Inter, system-ui, sans-serif;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: #0f1115;
+        color: #f4f7ff;
+        display: grid;
+        grid-template-rows: auto 1fr;
+      }
+      .toolbar {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        padding: 0.9rem 1rem;
+        border-bottom: 1px solid #2a2f3a;
+        background: rgba(17, 20, 27, 0.96);
+      }
+      .toolbar h1 {
+        margin: 0;
+        font-size: 1rem;
+        font-weight: 600;
+      }
+      .toolbar input,
+      .toolbar button {
+        font: inherit;
+      }
+      .toolbar button {
+        border: 1px solid #3f7cff;
+        background: #3f7cff;
+        color: white;
+        border-radius: 0.5rem;
+        padding: 0.5rem 0.85rem;
+        cursor: pointer;
+      }
+      .toolbar button:disabled {
+        opacity: 0.55;
+        cursor: not-allowed;
+      }
+      .status {
+        font-size: 0.85rem;
+        color: #b6bfd5;
+      }
+      #viewer {
+        width: 100%;
+        height: 100%;
+        min-height: 0;
+      }
+      canvas {
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="toolbar">
+      <h1>Sharp Studio</h1>
+      <input id="photoInput" type="file" accept="image/*" />
+      <button id="reconstructButton">Reconstruct .ply</button>
+      <span id="status" class="status">Upload a photo to begin.</span>
+    </div>
+    <div id="viewer"></div>
+
+    <script type="module">
+      import * as THREE from 'https://unpkg.com/three@0.170.0/build/three.module.js';
+      import { OrbitControls } from 'https://unpkg.com/three@0.170.0/examples/jsm/controls/OrbitControls.js';
+      import { PLYLoader } from 'https://unpkg.com/three@0.170.0/examples/jsm/loaders/PLYLoader.js';
+
+      const viewer = document.getElementById('viewer');
+      const fileInput = document.getElementById('photoInput');
+      const reconstructButton = document.getElementById('reconstructButton');
+      const status = document.getElementById('status');
+
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x11141b);
+
+      const camera = new THREE.PerspectiveCamera(60, 1, 0.01, 2000);
+      camera.position.set(0, 0.2, 1.4);
+
+      const renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setPixelRatio(window.devicePixelRatio);
+      viewer.appendChild(renderer.domElement);
+
+      const controls = new OrbitControls(camera, renderer.domElement);
+      controls.enableDamping = true;
+      controls.target.set(0, 0, 0);
+
+      scene.add(new THREE.AmbientLight(0xffffff, 0.65));
+      const directionalLight = new THREE.DirectionalLight(0xffffff, 1.0);
+      directionalLight.position.set(1.2, 1.6, 1.0);
+      scene.add(directionalLight);
+
+      let currentObject;
+      let lastGeneratedAt = 0;
+
+      function setStatus(text) {
+        status.textContent = text;
+      }
+
+      function onResize() {
+        const width = viewer.clientWidth;
+        const height = viewer.clientHeight;
+        renderer.setSize(width, height);
+        camera.aspect = width / Math.max(height, 1);
+        camera.updateProjectionMatrix();
+      }
+
+      function frameObject(object3d) {
+        const box = new THREE.Box3().setFromObject(object3d);
+        const size = box.getSize(new THREE.Vector3());
+        const center = box.getCenter(new THREE.Vector3());
+        const maxSize = Math.max(size.x, size.y, size.z, 0.1);
+        const distance = maxSize * 1.6;
+
+        controls.target.copy(center);
+        camera.position.set(center.x + distance, center.y + distance * 0.35, center.z + distance);
+        camera.near = Math.max(distance / 100, 0.01);
+        camera.far = distance * 20;
+        camera.updateProjectionMatrix();
+        controls.update();
+      }
+
+      function renderPly(modelUrl, generatedAt) {
+        const loader = new PLYLoader();
+        setStatus('Loading model...');
+
+        loader.load(
+          modelUrl,
+          (geometry) => {
+            geometry.computeBoundingSphere();
+
+            const hasColor = geometry.hasAttribute('color');
+            const material = new THREE.PointsMaterial({
+              size: 0.01,
+              vertexColors: hasColor,
+              color: hasColor ? 0xffffff : 0x8fb4ff,
+              sizeAttenuation: true,
+            });
+
+            const points = new THREE.Points(geometry, material);
+            if (currentObject) {
+              scene.remove(currentObject);
+              currentObject.geometry?.dispose?.();
+              currentObject.material?.dispose?.();
+            }
+            currentObject = points;
+            scene.add(points);
+
+            frameObject(points);
+            lastGeneratedAt = generatedAt;
+            setStatus(`Model ready (${new Date(generatedAt).toLocaleTimeString()}).`);
+          },
+          undefined,
+          (error) => {
+            setStatus(`Failed to load .ply: ${error.message || error}`);
+          }
+        );
+      }
+
+      async function reconstruct() {
+        const file = fileInput.files?.[0];
+        if (!file) {
+          setStatus('Please choose an image file first.');
+          return;
+        }
+
+        reconstructButton.disabled = true;
+        setStatus('Running SHARP reconstruction...');
+
+        const formData = new FormData();
+        formData.append('image', file);
+
+        try {
+          const response = await fetch('/api/reconstruct', {
+            method: 'POST',
+            body: formData,
+          });
+
+          const data = await response.json();
+          if (!response.ok) {
+            throw new Error(data.detail || data.error || 'Unknown backend error');
+          }
+
+          renderPly(data.modelUrl, data.generatedAt);
+        } catch (error) {
+          setStatus(`Reconstruction failed: ${error.message || error}`);
+        } finally {
+          reconstructButton.disabled = false;
+        }
+      }
+
+      async function refreshIfUpdated() {
+        try {
+          const response = await fetch('/api/latest', { cache: 'no-store' });
+          if (!response.ok) {
+            return;
+          }
+          const data = await response.json();
+          if (data.generatedAt > lastGeneratedAt) {
+            renderPly(data.modelUrl, data.generatedAt);
+          }
+        } catch {
+          // no-op
+        }
+      }
+
+      reconstructButton.addEventListener('click', reconstruct);
+      window.addEventListener('resize', onResize);
+
+      onResize();
+      setInterval(refreshIfUpdated, 4000);
+
+      function animate() {
+        requestAnimationFrame(animate);
+        controls.update();
+        renderer.render(scene, camera);
+      }
+      animate();
+      refreshIfUpdated();
+    </script>
+  </body>
+</html>

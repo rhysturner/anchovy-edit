@@ -27,3 +27,8 @@ dist-ssr/
 # OS
 .DS_Store
 Thumbs.db
+
+# Sharp Studio generated outputs
+/sharp-studio/backend/work/
+/sharp-studio/backend/wwwroot/models/*.ply
+!/sharp-studio/backend/wwwroot/models/.gitkeep
