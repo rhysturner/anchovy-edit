@@ -25,6 +25,17 @@ app.MapPost("/api/reconstruct", async (IFormFile image, CancellationToken cancel
         return Results.BadRequest(new { error = "No image uploaded." });
     }
 
+    const long maxUploadBytes = 20 * 1024 * 1024;
+    if (image.Length > maxUploadBytes)
+    {
+        return Results.BadRequest(new { error = "Image too large. Maximum upload size is 20MB." });
+    }
+
+    if (string.IsNullOrWhiteSpace(image.ContentType) || !image.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+    {
+        return Results.BadRequest(new { error = "Unsupported content type. Upload an image file." });
+    }
+
     var extension = Path.GetExtension(image.FileName);
     var allowedExtensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
