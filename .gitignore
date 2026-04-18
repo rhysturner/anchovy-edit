@@ -32,3 +32,5 @@ Thumbs.db
 /sharp-studio/backend/work/
 /sharp-studio/backend/wwwroot/models/*.ply
 !/sharp-studio/backend/wwwroot/models/.gitkeep
+/sharp-studio/backend/bin/
+/sharp-studio/backend/obj/
