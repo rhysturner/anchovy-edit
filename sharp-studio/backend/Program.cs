@@ -26,9 +26,16 @@ app.MapPost("/api/reconstruct", async (IFormFile image, CancellationToken cancel
     }
 
     var extension = Path.GetExtension(image.FileName);
-    if (string.IsNullOrWhiteSpace(extension))
+    var allowedExtensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
-        extension = ".png";
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".webp"
+    };
+    if (string.IsNullOrWhiteSpace(extension) || !allowedExtensions.Contains(extension))
+    {
+        return Results.BadRequest(new { error = "Unsupported image format. Use .png, .jpg, .jpeg, or .webp." });
     }
 
     var requestId = Guid.NewGuid().ToString("N");
@@ -37,8 +44,7 @@ app.MapPost("/api/reconstruct", async (IFormFile image, CancellationToken cancel
     Directory.CreateDirectory(requestInputDir);
     Directory.CreateDirectory(requestOutputDir);
 
-    var safeExtension = extension.Replace("..", string.Empty, StringComparison.Ordinal);
-    var inputPath = Path.Combine(requestInputDir, $"input{safeExtension}");
+    var inputPath = Path.Combine(requestInputDir, $"input{extension.ToLowerInvariant()}");
 
     await using (var stream = File.Create(inputPath))
     {

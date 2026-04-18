@@ -5,8 +5,8 @@ A video edit web app
 
 This repository now includes a standalone local web app at:
 
-- Backend/API: `/home/runner/work/anchovy-edit/anchovy-edit/sharp-studio/backend`
-- Frontend page: `/home/runner/work/anchovy-edit/anchovy-edit/sharp-studio/backend/wwwroot/index.html`
+- Backend/API: `sharp-studio/backend`
+- Frontend page: `sharp-studio/backend/wwwroot/index.html`
 
 ### What it does
 
@@ -32,7 +32,7 @@ sharp --help
 ### Run
 
 ```bash
-cd /home/runner/work/anchovy-edit/anchovy-edit/sharp-studio/backend
+cd sharp-studio/backend
 dotnet run
 ```
 
