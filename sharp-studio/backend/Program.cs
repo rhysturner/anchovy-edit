@@ -108,6 +108,9 @@ app.MapPost("/api/reconstruct", async (IFormFile image, CancellationToken cancel
 
     var plyPath = Directory
         .EnumerateFiles(requestOutputDir, "*.ply", SearchOption.AllDirectories)
+        .Select(path => new FileInfo(path))
+        .OrderByDescending(file => file.LastWriteTimeUtc)
+        .Select(file => file.FullName)
         .FirstOrDefault();
 
     if (plyPath is null)
