@@ -211,10 +211,11 @@
       const PARALLAX_LOOKAT_X = 0.02;
       const PARALLAX_LOOKAT_Y = 0.015;
       const PARALLAX_LERP = 0.08;
-      // Degrees of handheld tilt used to normalize deviceorientation input into [-1, 1].
+      // Degrees of handheld tilt used to normalize device orientation input into [-1, 1].
       const DEVICE_TILT_GAMMA_RANGE = 35;
       const DEVICE_TILT_BETA_RANGE = 40;
       const CAMERA_PULLBACK_SCALE = 1.2;
+      let deviceOrientationEnabled = false;
 
       function applyPointSizeToCurrentModel() {
         splatSizeValue.textContent = pointSize.toFixed(2);
@@ -274,6 +275,7 @@
         rootElement: viewerCanvas,
         threeScene: scene,
         useBuiltInControls: false,
+        // Keep these settings robust without COOP/COEP while favoring stable high-quality sorting.
         gpuAcceleratedSort: true,
         sharedMemoryForWorkers: false,
         integerBasedSort: false,
@@ -333,7 +335,7 @@
         setParallaxTargetFromNormalized(0, 0);
       });
 
-      window.addEventListener('deviceorientation', (event) => {
+      const onDeviceOrientation = (event) => {
         if (pointerIsActive) return;
         if (event.gamma === null || event.gamma === undefined || event.beta === null || event.beta === undefined) return;
         // Normalize typical handheld tilt range (~±35° gamma, ~±40° beta) into [-1, 1].
@@ -341,7 +343,32 @@
           event.gamma / DEVICE_TILT_GAMMA_RANGE,
           event.beta / -DEVICE_TILT_BETA_RANGE
         );
-      }, { passive: true });
+      };
+
+      function attachDeviceOrientationListener() {
+        if (deviceOrientationEnabled) return;
+        window.addEventListener('deviceorientation', onDeviceOrientation, { passive: true });
+        deviceOrientationEnabled = true;
+      }
+
+      async function enableDeviceOrientationIfNeeded() {
+        if (deviceOrientationEnabled) return;
+        if (typeof DeviceOrientationEvent !== 'undefined'
+            && typeof DeviceOrientationEvent.requestPermission === 'function') {
+          try {
+            const permission = await DeviceOrientationEvent.requestPermission();
+            if (permission !== 'granted') return;
+          } catch {
+            return;
+          }
+        }
+        attachDeviceOrientationListener();
+      }
+
+      viewerCanvas.addEventListener('pointerdown', () => {
+        enableDeviceOrientationIfNeeded();
+      }, { once: true });
+      attachDeviceOrientationListener();
 
       function onResize() {
         const width = viewer.clientWidth;
