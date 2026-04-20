@@ -334,7 +334,7 @@
 
       window.addEventListener('deviceorientation', (event) => {
         if (pointerIsActive) return;
-        if (event.gamma == null || event.beta == null) return;
+        if (event.gamma === null || event.gamma === undefined || event.beta === null || event.beta === undefined) return;
         // Normalize typical handheld tilt range (~±35° gamma, ~±40° beta) into [-1, 1].
         setParallaxTargetFromNormalized(
           event.gamma / DEVICE_TILT_GAMMA_RANGE,
