@@ -111,6 +111,29 @@
         width: 100%;
         height: 100%;
         min-height: 0;
+        position: relative;
+        overflow: hidden;
+        background: radial-gradient(circle at 50% 45%, #1d2230 0%, #10131b 70%);
+      }
+      .viewer-backdrop {
+        position: absolute;
+        inset: 0;
+        opacity: 0;
+        background-position: center;
+        background-size: cover;
+        filter: blur(30px) saturate(1.1);
+        transform: scale(1.08);
+        transition: opacity 200ms ease;
+        pointer-events: none;
+      }
+      .viewer-backdrop.has-image {
+        opacity: 0.6;
+      }
+      .viewer-canvas {
+        position: relative;
+        z-index: 1;
+        width: 100%;
+        height: 100%;
       }
       canvas {
         display: block;
@@ -123,9 +146,9 @@
       <input id="photoInput" type="file" accept="image/*" />
       <button id="reconstructButton">Reconstruct .ply</button>
       <label class="control-group" for="splatSizeInput">
-        <span>Splat size</span>
-        <input id="splatSizeInput" type="range" min="0.001" max="0.02" step="0.0005" value="0.005" />
-        <span id="splatSizeValue">0.0050</span>
+        <span>Splat scale</span>
+        <input id="splatSizeInput" type="range" min="0.3" max="2.0" step="0.05" value="1.0" />
+        <span id="splatSizeValue">1.00</span>
       </label>
       <span id="status" class="status">Upload a photo to begin.</span>
     </div>
@@ -142,22 +165,28 @@
         </div>
         <img id="previewImage" alt="Source image preview" />
       </div>
-      <div id="viewer"></div>
+      <div id="viewer">
+        <div id="viewerBackdrop" class="viewer-backdrop"></div>
+        <div id="viewerCanvas" class="viewer-canvas"></div>
+      </div>
     </div>
 
     <script type="importmap">
     {
       "imports": {
         "three": "https://unpkg.com/three@0.170.0/build/three.module.js",
-        "three/addons/": "https://unpkg.com/three@0.170.0/examples/jsm/"
+        "three/addons/": "https://unpkg.com/three@0.170.0/examples/jsm/",
+        "@mkkellogg/gaussian-splats-3d": "https://cdn.jsdelivr.net/npm/@mkkellogg/gaussian-splats-3d@0.4.7/build/gaussian-splats-3d.module.js"
       }
     }
     </script>
     <script type="module">
       import * as THREE from 'three';
-      import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+      import * as GaussianSplats3D from '@mkkellogg/gaussian-splats-3d';
 
       const viewer = document.getElementById('viewer');
+      const viewerBackdrop = document.getElementById('viewerBackdrop');
+      const viewerCanvas = document.getElementById('viewerCanvas');
       const fileInput = document.getElementById('photoInput');
       const reconstructButton = document.getElementById('reconstructButton');
       const status = document.getElementById('status');
@@ -167,12 +196,27 @@
       const splatSizeValue = document.getElementById('splatSizeValue');
 
       let pointSize = parseFloat(splatSizeInput.value);
+      let lastGeneratedAt = 0;
+      let pointerIsActive = false;
+      const baseCameraPosition = new THREE.Vector3(0, 0, 1.3);
+      const baseCameraQuaternion = new THREE.Quaternion();
+      const baseCameraLookAt = new THREE.Vector3(0, 0, 0);
+      const parallaxTarget = new THREE.Vector2();
+      const parallaxCurrent = new THREE.Vector2();
+      const tmpRight = new THREE.Vector3();
+      const tmpUp = new THREE.Vector3();
+      const tmpLookAt = new THREE.Vector3();
+      const PARALLAX_SHIFT_X = 0.08;
+      const PARALLAX_SHIFT_Y = 0.06;
+      const PARALLAX_LOOKAT_X = 0.02;
+      const PARALLAX_LOOKAT_Y = 0.015;
+      const PARALLAX_LERP = 0.08;
 
       function applyPointSizeToCurrentModel() {
-        splatSizeValue.textContent = pointSize.toFixed(4);
-        if (!currentObject || !currentObject.material) return;
-        currentObject.material.size = pointSize;
-        currentObject.material.needsUpdate = true;
+        splatSizeValue.textContent = pointSize.toFixed(2);
+        const splatMesh = splatViewer.getSplatMesh();
+        if (!splatMesh) return;
+        splatMesh.setSplatScale(pointSize);
       }
 
       splatSizeInput.addEventListener('input', () => {
@@ -180,42 +224,116 @@
         applyPointSizeToCurrentModel();
       });
 
+      function setViewerBackdropImage(imageUrl) {
+        if (!imageUrl) {
+          viewerBackdrop.style.backgroundImage = '';
+          viewerBackdrop.classList.remove('has-image');
+          return;
+        }
+        viewerBackdrop.style.backgroundImage = `url("${imageUrl}")`;
+        viewerBackdrop.classList.add('has-image');
+      }
+
       fileInput.addEventListener('change', () => {
         const file = fileInput.files?.[0];
         if (!file) return;
-        const url = URL.createObjectURL(file);
-        previewImage.onload = () => URL.revokeObjectURL(url);
-        previewImage.src = url;
-        previewImage.classList.add('has-image');
-        previewPlaceholder.style.display = 'none';
+        const reader = new FileReader();
+        reader.onload = () => {
+          const imageUrl = String(reader.result || '');
+          if (!imageUrl) return;
+          previewImage.src = imageUrl;
+          previewImage.classList.add('has-image');
+          previewPlaceholder.style.display = 'none';
+          setViewerBackdropImage(imageUrl);
+        };
+        reader.readAsDataURL(file);
       });
 
       const scene = new THREE.Scene();
-      scene.background = new THREE.Color(0x11141b);
+      scene.background = null;
 
       const initialAspect = viewer.clientWidth / Math.max(viewer.clientHeight, 1);
       const camera = new THREE.PerspectiveCamera(60, initialAspect, 0.01, 2000);
-      camera.position.set(0, 0.2, 1.4);
+      camera.position.set(0, 0, 1.3);
+      camera.lookAt(0, 0, 0);
+      baseCameraQuaternion.copy(camera.quaternion);
 
-      const renderer = new THREE.WebGLRenderer({ antialias: true });
+      const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+      renderer.setClearColor(0x000000, 0);
       renderer.setPixelRatio(window.devicePixelRatio);
-      viewer.appendChild(renderer.domElement);
+      viewerCanvas.appendChild(renderer.domElement);
 
-      const controls = new OrbitControls(camera, renderer.domElement);
-      controls.enableDamping = true;
-      controls.target.set(0, 0, 0);
+      const splatViewer = new GaussianSplats3D.Viewer({
+        selfDrivenMode: false,
+        renderer,
+        camera,
+        rootElement: viewerCanvas,
+        threeScene: scene,
+        useBuiltInControls: false,
+        gpuAcceleratedSort: true,
+        sharedMemoryForWorkers: false,
+        integerBasedSort: false,
+        splatSortDistanceMapPrecision: 20,
+        sphericalHarmonicsDegree: 2,
+        antialiased: true,
+        focalAdjustment: 1.1,
+        sceneRevealMode: GaussianSplats3D.SceneRevealMode.Instant,
+        renderMode: GaussianSplats3D.RenderMode.Always,
+      });
 
-      scene.add(new THREE.AmbientLight(0xffffff, 0.65));
-      const directionalLight = new THREE.DirectionalLight(0xffffff, 1.0);
-      directionalLight.position.set(1.2, 1.6, 1.0);
-      scene.add(directionalLight);
-
-      let currentObject;
-      let lastGeneratedAt = 0;
+      function setParallaxTargetFromNormalized(nx, ny) {
+        parallaxTarget.set(
+          THREE.MathUtils.clamp(nx, -1, 1),
+          THREE.MathUtils.clamp(ny, -1, 1)
+        );
+      }
 
       function setStatus(text) {
         status.textContent = text;
       }
+
+      function updateBaseCamera(position, lookAt) {
+        baseCameraPosition.copy(position);
+        baseCameraLookAt.copy(lookAt);
+        camera.position.copy(position);
+        camera.lookAt(lookAt);
+        baseCameraQuaternion.copy(camera.quaternion);
+      }
+
+      function applyParallaxToCamera() {
+        parallaxCurrent.lerp(parallaxTarget, PARALLAX_LERP);
+        tmpRight.set(1, 0, 0).applyQuaternion(baseCameraQuaternion);
+        tmpUp.set(0, 1, 0).applyQuaternion(baseCameraQuaternion);
+
+        camera.position.copy(baseCameraPosition)
+          .addScaledVector(tmpRight, parallaxCurrent.x * PARALLAX_SHIFT_X)
+          .addScaledVector(tmpUp, parallaxCurrent.y * PARALLAX_SHIFT_Y);
+
+        tmpLookAt.copy(baseCameraLookAt)
+          .addScaledVector(tmpRight, parallaxCurrent.x * PARALLAX_LOOKAT_X)
+          .addScaledVector(tmpUp, parallaxCurrent.y * PARALLAX_LOOKAT_Y);
+        camera.lookAt(tmpLookAt);
+      }
+
+      viewerCanvas.addEventListener('pointermove', (event) => {
+        pointerIsActive = true;
+        const rect = viewerCanvas.getBoundingClientRect();
+        if (!rect.width || !rect.height) return;
+        const nx = ((event.clientX - rect.left) / rect.width - 0.5) * 2;
+        const ny = ((event.clientY - rect.top) / rect.height - 0.5) * -2;
+        setParallaxTargetFromNormalized(nx, ny);
+      });
+
+      viewerCanvas.addEventListener('pointerleave', () => {
+        pointerIsActive = false;
+        setParallaxTargetFromNormalized(0, 0);
+      });
+
+      window.addEventListener('deviceorientation', (event) => {
+        if (pointerIsActive) return;
+        if (event.gamma == null || event.beta == null) return;
+        setParallaxTargetFromNormalized(event.gamma / 35, event.beta / -40);
+      }, { passive: true });
 
       function onResize() {
         const width = viewer.clientWidth;
@@ -225,48 +343,29 @@
         camera.updateProjectionMatrix();
       }
 
-      function frameObject(object3d) {
-        const box = new THREE.Box3().setFromObject(object3d);
+      function frameSplatMesh(splatMesh) {
+        if (!splatMesh) return;
+        const box = splatMesh.boundingBox?.clone() ?? new THREE.Box3().setFromObject(splatMesh);
+        if (box.isEmpty()) return;
         const size = box.getSize(new THREE.Vector3());
         const center = box.getCenter(new THREE.Vector3());
         const maxSize = Math.max(size.x, size.y, size.z, 0.1);
-        const distance = maxSize * 1.6;
+        const fovRad = THREE.MathUtils.degToRad(camera.fov);
+        const distance = Math.max((maxSize * 0.5) / Math.tan(fovRad * 0.5), 0.8) * 1.3;
 
-        controls.target.copy(center);
-        camera.position.set(center.x + distance, center.y + distance * 0.35, center.z + distance);
-        camera.near = Math.max(distance / 100, 0.01);
-        camera.far = distance * 20;
+        updateBaseCamera(
+          new THREE.Vector3(center.x, center.y, center.z + distance),
+          center
+        );
+        camera.near = Math.max(distance / 100, 0.001);
+        camera.far = distance * 40;
         camera.updateProjectionMatrix();
-        controls.update();
       }
 
-      // ── Custom binary PLY parser ──────────────────────────────────────────
-      // Three.js PLYLoader only handles standard property names (x/y/z/red/green/blue).
-      // SHARP outputs Gaussian-splat style PLYs with f_dc_0/1/2 SH coefficients
-      // and embedded camera matrices. We parse the binary directly.
-
-      async function parsePly(url) {
-        // Stream the file and report download progress
+      async function parseSharpCameraData(url) {
         const resp = await fetch(url);
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-        const contentLength = +resp.headers.get('Content-Length') || 0;
-        const reader = resp.body.getReader();
-        const chunks = [];
-        let received = 0;
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          chunks.push(value);
-          received += value.byteLength;
-          if (contentLength) setStatus(`Downloading… ${Math.round(received / contentLength * 100)}%`);
-        }
-
-        const raw = new Uint8Array(received);
-        let off = 0;
-        for (const c of chunks) { raw.set(c, off); off += c.byteLength; }
-        const ab = raw.buffer;
-
-        // Parse ASCII header
+        const ab = await resp.arrayBuffer();
         const headerSlice = new Uint8Array(ab, 0, Math.min(8192, ab.byteLength));
         const headerText = new TextDecoder('ascii').decode(headerSlice);
         const endTag = 'end_header\n';
@@ -275,7 +374,7 @@
         const dataStart = endIdx + endTag.length;
         const isLE = headerText.includes('binary_little_endian');
 
-        // Build element/property map
+        const typeSize = { float: 4, double: 8, int: 4, uint: 4, short: 2, ushort: 2, char: 1, uchar: 1 };
         const elements = [];
         let cur = null;
         for (const line of headerText.slice(0, endIdx).split('\n').map(s => s.trim()).filter(Boolean)) {
@@ -285,7 +384,7 @@
             elements.push(cur);
           } else if (line.startsWith('property ') && cur) {
             const [, type, pname] = line.split(' ');
-            const sz = { float: 4, double: 8, int: 4, uint: 4, short: 2, ushort: 2, char: 1, uchar: 1 }[type] ?? 4;
+            const sz = typeSize[type] ?? 4;
             cur.props.push({ name: pname, type, sz });
             cur.stride += sz;
           }
@@ -298,88 +397,26 @@
           if (t === 'float') return view.getFloat32(o, isLE);
           if (t === 'double') return view.getFloat64(o, isLE);
           if (t === 'uint') return view.getUint32(o, isLE);
-          if (t === 'int') return view.getInt32(o, isLE);
-          if (t === 'uchar') return view.getUint8(o);
-          return view.getFloat32(o, isLE);
+          return view.getInt32(o, isLE);
         };
 
-        // ── Vertex data ──
-        const vertEl = elements.find(e => e.name === 'vertex');
-        if (!vertEl) throw new Error('PLY has no vertex element');
-
-        // Build per-property byte offsets within a vertex stride
-        const pOff = {};
-        let po = 0;
-        for (const p of vertEl.props) { pOff[p.name] = { off: po, type: p.type }; po += p.sz; }
-
-        const n = vertEl.count;
-        const stride = vertEl.stride;
-        const base = vertEl.dataOffset;
-
-        const xp = pOff['x'], yp = pOff['y'], zp = pOff['z'];
-        if (!xp || !yp || !zp) throw new Error('PLY missing x/y/z');
-
-        const r0p = pOff['f_dc_0'], r1p = pOff['f_dc_1'], r2p = pOff['f_dc_2'];
-        const hasGsColor = !!(r0p && r1p && r2p);
-
-        // Also check for standard uchar red/green/blue
-        const rrp = pOff['red'], rgp = pOff['green'], rbp = pOff['blue'];
-        const hasRgb = !!(rrp && rgp && rbp);
-
-        const positions = new Float32Array(n * 3);
-        const colors = (hasGsColor || hasRgb) ? new Float32Array(n * 3) : null;
-        const SH_C0 = 0.28209479177387814;
-        const SH_EXPOSURE = 1.45;
-        const SH_GAMMA = 1 / 2.2;
-
-        setStatus('Parsing geometry…');
-        for (let i = 0; i < n; i++) {
-          const b = base + i * stride;
-          positions[i * 3]     = rd(b + xp.off, xp.type);
-          positions[i * 3 + 1] = rd(b + yp.off, yp.type);
-          positions[i * 3 + 2] = rd(b + zp.off, zp.type);
-
-          if (colors) {
-            if (hasGsColor) {
-              const r = rd(b + r0p.off, r0p.type);
-              const g = rd(b + r1p.off, r1p.type);
-              const bv = rd(b + r2p.off, r2p.type);
-
-              const lr = Math.min(1, Math.max(0, (0.5 + SH_C0 * r) * SH_EXPOSURE));
-              const lg = Math.min(1, Math.max(0, (0.5 + SH_C0 * g) * SH_EXPOSURE));
-              const lb = Math.min(1, Math.max(0, (0.5 + SH_C0 * bv) * SH_EXPOSURE));
-
-              colors[i * 3] = Math.pow(lr, SH_GAMMA);
-              colors[i * 3 + 1] = Math.pow(lg, SH_GAMMA);
-              colors[i * 3 + 2] = Math.pow(lb, SH_GAMMA);
-            } else {
-              colors[i * 3]     = rd(b + rrp.off, rrp.type) / 255;
-              colors[i * 3 + 1] = rd(b + rgp.off, rgp.type) / 255;
-              colors[i * 3 + 2] = rd(b + rbp.off, rbp.type) / 255;
-            }
-          }
-        }
-
-        // ── Camera matrices ──
         const readEl = (name, count, type) => {
           const el = elements.find(e => e.name === name);
-          if (!el || el.count !== count) return null;
-          return Array.from({ length: count }, (_, i) => rd(el.dataOffset + i * el.stride, type));
+          const scalarSize = typeSize[type] ?? 4;
+          if (!el || el.count * Math.max(1, Math.floor(el.stride / scalarSize)) < count) return null;
+          return Array.from({ length: count }, (_, i) => rd(el.dataOffset + i * scalarSize, type));
         };
 
         const extrinsic  = readEl('extrinsic',  16, 'float');
         const intrinsic  = readEl('intrinsic',   9, 'float');
         const imageSize  = readEl('image_size',  2, 'uint');
 
-        return { positions, colors, extrinsic, intrinsic, imageSize };
+        return { extrinsic, intrinsic, imageSize };
       }
 
-      // Apply the embedded SHARP camera pose (extrinsic = world-to-camera, row-major,
-      // OpenCV convention: Y-down, Z-forward) to the Three.js camera.
       function setCameraFromSHARP(extrinsic, intrinsic, imageSize) {
         if (!extrinsic || !intrinsic || !imageSize) return false;
 
-        // Build world-to-camera matrix (row-major input → THREE.Matrix4.set is row-major)
         const w2c = new THREE.Matrix4().set(
           extrinsic[0],  extrinsic[1],  extrinsic[2],  extrinsic[3],
           extrinsic[4],  extrinsic[5],  extrinsic[6],  extrinsic[7],
@@ -387,12 +424,8 @@
           extrinsic[12], extrinsic[13], extrinsic[14], extrinsic[15]
         );
 
-        // Invert to get camera-to-world (gives us camera position in world space)
         const c2w = w2c.clone().invert();
 
-        // SHARP uses OpenCV convention (Y-down, Z-into-screen).
-        // Three.js uses OpenGL convention (Y-up, Z-out-of-screen).
-        // Apply the flip on Y and Z axes to convert coordinate systems.
         const cvToGl = new THREE.Matrix4().set(
           1,  0,  0, 0,
           0, -1,  0, 0,
@@ -401,18 +434,10 @@
         );
         const c2wGL = cvToGl.multiply(c2w);
 
-        c2wGL.decompose(camera.position, camera.quaternion, new THREE.Vector3(1, 1, 1));
+        const position = new THREE.Vector3();
+        const quaternion = new THREE.Quaternion();
+        c2wGL.decompose(position, quaternion, new THREE.Vector3(1, 1, 1));
 
-        // SHARP camera roll is inverted relative to the preview image.
-        // Apply a 180° roll while preserving position and forward direction.
-        // camera.rotateZ(Math.PI);
-
-        // OrbitControls recalculates orientation from target + up, so preserve
-        // the calibrated roll by copying the quaternion-derived up vector.
-        const derivedUp = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion).normalize();
-        camera.up.copy(derivedUp);
-
-        // FOV from intrinsic K matrix (row-major 3×3: [fx,0,cx, 0,fy,cy, 0,0,1])
         const fy = intrinsic[4];
         const imgH = imageSize[1];
         camera.fov = 2 * Math.atan(imgH / (2 * fy)) * (180 / Math.PI);
@@ -420,50 +445,43 @@
         camera.far = 2000;
         camera.updateProjectionMatrix();
 
-        // Aim orbit controls at a point in front of the camera.
-        const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
-        controls.target.copy(camera.position).addScaledVector(fwd, 1.0);
-        controls.update();
-        return true;
-      }
+        const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(quaternion);
+        const lookAt = position.clone().addScaledVector(fwd, 1.0);
+        const pulledPosition = lookAt.clone().add(position.clone().sub(lookAt).multiplyScalar(1.2));
 
-      function pullCameraBackFromTarget(scale = 1.8) {
-        if (scale <= 1) return;
-        const toCamera = camera.position.clone().sub(controls.target);
-        camera.position.copy(controls.target).add(toCamera.multiplyScalar(scale));
-        controls.update();
+        baseCameraPosition.copy(pulledPosition);
+        baseCameraLookAt.copy(lookAt);
+        baseCameraQuaternion.copy(quaternion);
+        camera.position.copy(baseCameraPosition);
+        camera.quaternion.copy(baseCameraQuaternion);
+        return true;
       }
 
       async function renderPly(modelUrl, generatedAt) {
         try {
-          const { positions, colors, extrinsic, intrinsic, imageSize } = await parsePly(modelUrl);
-
-          const geometry = new THREE.BufferGeometry();
-          geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-          if (colors) geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-          geometry.computeBoundingSphere();
-
-          const material = new THREE.PointsMaterial({
-            size: pointSize,
-            vertexColors: !!colors,
-            color: colors ? 0xffffff : 0x8fb4ff,
-            sizeAttenuation: true,
-          });
-
-          const points = new THREE.Points(geometry, material);
-          if (currentObject) {
-            scene.remove(currentObject);
-            currentObject.geometry?.dispose?.();
-            currentObject.material?.dispose?.();
+          setStatus('Loading Gaussian splats…');
+          const cameraDataPromise = parseSharpCameraData(modelUrl).catch(() => null);
+          if (splatViewer.getSceneCount() > 0) {
+            await splatViewer.removeSplatScene(0, false);
           }
-          currentObject = points;
-          scene.add(points);
 
-          const usedCamera = setCameraFromSHARP(extrinsic, intrinsic, imageSize);
-          if (usedCamera) {
-            pullCameraBackFromTarget(1.8);
-          } else {
-            frameObject(points);
+          const versionedModelUrl = new URL(modelUrl, window.location.href);
+          versionedModelUrl.searchParams.set('t', String(generatedAt));
+
+          await splatViewer.addSplatScene(versionedModelUrl.toString(), {
+            format: GaussianSplats3D.SceneFormat.Ply,
+            showLoadingUI: false,
+            progressiveLoad: false,
+            splatAlphaRemovalThreshold: 1,
+          });
+          applyPointSizeToCurrentModel();
+
+          const cameraData = await cameraDataPromise;
+          const usedCamera = cameraData
+            ? setCameraFromSHARP(cameraData.extrinsic, cameraData.intrinsic, cameraData.imageSize)
+            : false;
+          if (!usedCamera) {
+            frameSplatMesh(splatViewer.getSplatMesh());
           }
 
           lastGeneratedAt = generatedAt;
@@ -538,8 +556,9 @@
 
       function animate() {
         requestAnimationFrame(animate);
-        controls.update();
-        renderer.render(scene, camera);
+        applyParallaxToCamera();
+        splatViewer.update();
+        splatViewer.render();
       }
       animate();
       refreshIfUpdated();
