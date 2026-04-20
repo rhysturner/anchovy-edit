@@ -212,7 +212,7 @@
       const PARALLAX_LOOKAT_Y = 0.015;
       const PARALLAX_LERP = 0.08;
       const DEVICE_TILT_GAMMA_RANGE = 35;
-      const DEVICE_TILT_BETA_RANGE = -40;
+      const DEVICE_TILT_BETA_RANGE = 40;
       const CAMERA_PULLBACK_SCALE = 1.2;
 
       function applyPointSizeToCurrentModel() {
@@ -338,7 +338,7 @@
         // Normalize typical handheld tilt range (~±35° gamma, ~±40° beta) into [-1, 1].
         setParallaxTargetFromNormalized(
           event.gamma / DEVICE_TILT_GAMMA_RANGE,
-          event.beta / DEVICE_TILT_BETA_RANGE
+          event.beta / -DEVICE_TILT_BETA_RANGE
         );
       }, { passive: true });
 
@@ -404,13 +404,15 @@
           if (t === 'float') return view.getFloat32(o, isLE);
           if (t === 'double') return view.getFloat64(o, isLE);
           if (t === 'uint') return view.getUint32(o, isLE);
+          if (t === 'uchar') return view.getUint8(o);
           return view.getInt32(o, isLE);
         };
 
         const readEl = (name, count, type) => {
           const el = elements.find(e => e.name === name);
           const scalarSize = typeSize[type] ?? 4;
-          // Handle both layouts: count=N,stride=scalarSize and count=1,stride=(N*scalarSize).
+          // Handle both matrix layouts seen in SHARP PLY output:
+          // (a) count=N with one scalar per element, or (b) count=1 with N scalar properties in one element.
           const effectiveElementCount = el ? el.count * Math.max(1, Math.floor(el.stride / scalarSize)) : 0;
           if (!el || effectiveElementCount < count) return null;
           return Array.from({ length: count }, (_, i) => rd(el.dataOffset + i * scalarSize, type));
@@ -456,8 +458,10 @@
 
         const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(quaternion);
         const lookAt = position.clone().addScaledVector(fwd, 1.0);
-        const pulledPosition = lookAt.clone()
-          .add(position.clone().sub(lookAt).multiplyScalar(CAMERA_PULLBACK_SCALE));
+        const pulledPosition = position.clone()
+          .sub(lookAt)
+          .multiplyScalar(CAMERA_PULLBACK_SCALE)
+          .add(lookAt);
 
         baseCameraPosition.copy(pulledPosition);
         baseCameraLookAt.copy(lookAt);
