@@ -211,6 +211,7 @@
       const PARALLAX_LOOKAT_X = 0.02;
       const PARALLAX_LOOKAT_Y = 0.015;
       const PARALLAX_LERP = 0.08;
+      // Degrees of handheld tilt used to normalize deviceorientation input into [-1, 1].
       const DEVICE_TILT_GAMMA_RANGE = 35;
       const DEVICE_TILT_BETA_RANGE = 40;
       const CAMERA_PULLBACK_SCALE = 1.2;
@@ -411,10 +412,16 @@
         const readEl = (name, count, type) => {
           const el = elements.find(e => e.name === name);
           const scalarSize = typeSize[type] ?? 4;
+          if (!el) return null;
+
           // Handle both matrix layouts seen in SHARP PLY output:
           // (a) count=N with one scalar per element, or (b) count=1 with N scalar properties in one element.
-          const effectiveElementCount = el ? el.count * Math.max(1, Math.floor(el.stride / scalarSize)) : 0;
-          if (!el || effectiveElementCount < count) return null;
+          const isScalarElementArray = el.stride === scalarSize && el.count >= count;
+          const isPackedSingleElement = el.count === 1
+            && el.stride % scalarSize === 0
+            && el.stride >= count * scalarSize;
+          if (!isScalarElementArray && !isPackedSingleElement) return null;
+
           return Array.from({ length: count }, (_, i) => rd(el.dataOffset + i * scalarSize, type));
         };
 
