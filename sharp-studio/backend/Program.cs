@@ -1,0 +1,165 @@
+using System.ComponentModel;
+using System.Diagnostics;
+using Microsoft.AspNetCore.StaticFiles;
+
+var builder = WebApplication.CreateBuilder(args);
+
+builder.WebHost.ConfigureKestrel(options =>
+{
+    options.Limits.MaxRequestBodySize = 100 * 1024 * 1024; // 100 MB
+});
+
+var app = builder.Build();
+
+var contentRoot = app.Environment.ContentRootPath;
+var workRoot = Path.Combine(contentRoot, "work");
+var inputRoot = Path.Combine(workRoot, "inputs");
+var outputRoot = Path.Combine(workRoot, "outputs");
+var modelRoot = Path.Combine(contentRoot, "wwwroot", "models");
+
+Directory.CreateDirectory(inputRoot);
+Directory.CreateDirectory(outputRoot);
+Directory.CreateDirectory(modelRoot);
+
+var contentTypeProvider = new FileExtensionContentTypeProvider();
+contentTypeProvider.Mappings[".ply"] = "application/octet-stream";
+
+app.UseDefaultFiles();
+app.UseStaticFiles(new StaticFileOptions
+{
+    ContentTypeProvider = contentTypeProvider
+});
+
+app.MapPost("/api/reconstruct", async (IFormFile image, CancellationToken cancellationToken) =>
+{
+    if (image.Length == 0)
+    {
+        return Results.BadRequest(new { error = "No image uploaded." });
+    }
+
+    const long maxUploadBytes = 100 * 1024 * 1024;
+    if (image.Length > maxUploadBytes)
+    {
+        return Results.BadRequest(new { error = "Image too large. Maximum upload size is 100MB." });
+    }
+
+    if (string.IsNullOrWhiteSpace(image.ContentType) || !image.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+    {
+        return Results.BadRequest(new { error = "Unsupported content type. Upload an image file." });
+    }
+
+    var extension = Path.GetExtension(image.FileName);
+    var allowedExtensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".webp"
+    };
+    if (string.IsNullOrWhiteSpace(extension) || !allowedExtensions.Contains(extension))
+    {
+        return Results.BadRequest(new { error = "Unsupported image format. Use .png, .jpg, .jpeg, or .webp." });
+    }
+
+    var requestId = Guid.NewGuid().ToString("N");
+    var requestInputDir = Path.Combine(inputRoot, requestId);
+    var requestOutputDir = Path.Combine(outputRoot, requestId);
+    Directory.CreateDirectory(requestInputDir);
+    Directory.CreateDirectory(requestOutputDir);
+
+    var inputPath = Path.Combine(requestInputDir, $"input{extension.ToLowerInvariant()}");
+
+    await using (var stream = File.Create(inputPath))
+    {
+        await image.CopyToAsync(stream, cancellationToken);
+    }
+
+    var processStartInfo = new ProcessStartInfo
+    {
+        FileName = "sharp",
+        RedirectStandardError = true,
+        RedirectStandardOutput = true,
+        UseShellExecute = false,
+        CreateNoWindow = true
+    };
+
+    processStartInfo.ArgumentList.Add("predict");
+    processStartInfo.ArgumentList.Add("-i");
+    processStartInfo.ArgumentList.Add(requestInputDir);
+    processStartInfo.ArgumentList.Add("-o");
+    processStartInfo.ArgumentList.Add(requestOutputDir);
+
+    try
+    {
+        using var process = new Process { StartInfo = processStartInfo };
+        process.Start();
+
+        var stdOutTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
+        var stdErrTask = process.StandardError.ReadToEndAsync(cancellationToken);
+
+        await process.WaitForExitAsync(cancellationToken);
+
+        var stdOut = await stdOutTask;
+        var stdErr = await stdErrTask;
+
+        if (process.ExitCode != 0)
+        {
+            return Results.Problem(
+                title: "SHARP reconstruction failed",
+                detail: $"Exit code: {process.ExitCode}\n{stdErr}\n{stdOut}",
+                statusCode: StatusCodes.Status500InternalServerError);
+        }
+    }
+    catch (Win32Exception ex)
+    {
+        return Results.Problem(
+            title: "SHARP CLI not found",
+            detail: $"Could not execute 'sharp'. Ensure Apple ml-sharp is installed and available on PATH. {ex.Message}",
+            statusCode: StatusCodes.Status500InternalServerError);
+    }
+
+    var plyPath = Directory
+        .EnumerateFiles(requestOutputDir, "*.ply", SearchOption.AllDirectories)
+        .Select(path => new FileInfo(path))
+        .OrderByDescending(file => file.LastWriteTimeUtc)
+        .Select(file => file.FullName)
+        .FirstOrDefault();
+
+    if (plyPath is null)
+    {
+        return Results.Problem(
+            title: "No PLY output found",
+            detail: "The SHARP process completed but did not produce a .ply file.",
+            statusCode: StatusCodes.Status500InternalServerError);
+    }
+
+    var latestPath = Path.Combine(modelRoot, "latest.ply");
+    File.Copy(plyPath, latestPath, overwrite: true);
+
+    var version = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+    return Results.Json(new
+    {
+        modelUrl = $"/models/latest.ply?v={version}",
+        generatedAt = version
+    });
+}).DisableAntiforgery();
+
+app.MapGet("/api/latest", () =>
+{
+    var latestPath = Path.Combine(modelRoot, "latest.ply");
+    if (!File.Exists(latestPath))
+    {
+        return Results.Json(new { modelUrl = (string?)null, generatedAt = (long?)null });
+    }
+
+    var generatedAt = new DateTimeOffset(File.GetLastWriteTimeUtc(latestPath)).ToUnixTimeMilliseconds();
+    return Results.Json(new
+    {
+        modelUrl = $"/models/latest.ply?v={generatedAt}",
+        generatedAt
+    });
+});
+
+app.MapGet("/health", () => Results.Json(new { status = "ok" }));
+
+app.Run();
