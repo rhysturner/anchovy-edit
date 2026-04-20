@@ -1,7 +1,13 @@
 using System.ComponentModel;
 using System.Diagnostics;
+using Microsoft.AspNetCore.StaticFiles;
 
 var builder = WebApplication.CreateBuilder(args);
+
+builder.WebHost.ConfigureKestrel(options =>
+{
+    options.Limits.MaxRequestBodySize = 100 * 1024 * 1024; // 100 MB
+});
 
 var app = builder.Build();
 
@@ -15,8 +21,14 @@ Directory.CreateDirectory(inputRoot);
 Directory.CreateDirectory(outputRoot);
 Directory.CreateDirectory(modelRoot);
 
+var contentTypeProvider = new FileExtensionContentTypeProvider();
+contentTypeProvider.Mappings[".ply"] = "application/octet-stream";
+
 app.UseDefaultFiles();
-app.UseStaticFiles();
+app.UseStaticFiles(new StaticFileOptions
+{
+    ContentTypeProvider = contentTypeProvider
+});
 
 app.MapPost("/api/reconstruct", async (IFormFile image, CancellationToken cancellationToken) =>
 {
@@ -25,10 +37,10 @@ app.MapPost("/api/reconstruct", async (IFormFile image, CancellationToken cancel
         return Results.BadRequest(new { error = "No image uploaded." });
     }
 
-    const long maxUploadBytes = 20 * 1024 * 1024;
+    const long maxUploadBytes = 100 * 1024 * 1024;
     if (image.Length > maxUploadBytes)
     {
-        return Results.BadRequest(new { error = "Image too large. Maximum upload size is 20MB." });
+        return Results.BadRequest(new { error = "Image too large. Maximum upload size is 100MB." });
     }
 
     if (string.IsNullOrWhiteSpace(image.ContentType) || !image.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
@@ -137,7 +149,7 @@ app.MapGet("/api/latest", () =>
     var latestPath = Path.Combine(modelRoot, "latest.ply");
     if (!File.Exists(latestPath))
     {
-        return Results.NotFound(new { error = "No generated model found yet." });
+        return Results.Json(new { modelUrl = (string?)null, generatedAt = (long?)null });
     }
 
     var generatedAt = new DateTimeOffset(File.GetLastWriteTimeUtc(latestPath)).ToUnixTimeMilliseconds();
