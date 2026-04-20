@@ -224,13 +224,13 @@
         applyPointSizeToCurrentModel();
       });
 
-      function setViewerBackdropImage(imageUrl) {
-        if (!imageUrl) {
+      function setViewerBackdropImage(imageSrc) {
+        if (!imageSrc) {
           viewerBackdrop.style.backgroundImage = '';
           viewerBackdrop.classList.remove('has-image');
           return;
         }
-        viewerBackdrop.style.backgroundImage = `url("${imageUrl}")`;
+        viewerBackdrop.style.backgroundImage = `url("${imageSrc}")`;
         viewerBackdrop.classList.add('has-image');
       }
 
@@ -332,6 +332,7 @@
       window.addEventListener('deviceorientation', (event) => {
         if (pointerIsActive) return;
         if (event.gamma == null || event.beta == null) return;
+        // Normalize typical handheld tilt range (~±35° gamma, ~±40° beta) into [-1, 1].
         setParallaxTargetFromNormalized(event.gamma / 35, event.beta / -40);
       }, { passive: true });
 
@@ -403,6 +404,7 @@
         const readEl = (name, count, type) => {
           const el = elements.find(e => e.name === name);
           const scalarSize = typeSize[type] ?? 4;
+          // Handle both layouts: count=N,stride=scalarSize and count=1,stride=(N*scalarSize).
           if (!el || el.count * Math.max(1, Math.floor(el.stride / scalarSize)) < count) return null;
           return Array.from({ length: count }, (_, i) => rd(el.dataOffset + i * scalarSize, type));
         };
