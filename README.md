@@ -13,7 +13,7 @@ This repository now includes a standalone local web app at:
 - Accepts a 2D photo upload from the browser
 - Runs Apple [ml-sharp](https://github.com/apple/ml-sharp) reconstruction via `sharp predict`
 - Exports a `.ply` model (`latest.ply`) and serves it from `/models/latest.ply`
-- Renders the model with Three.js `PLYLoader`, ambient + directional light, and `OrbitControls`
+- Renders SHARP `.ply` splats with `@mkkellogg/gaussian-splats-3d` using a constrained parallax camera effect
 - Frontend polls `/api/latest` and auto-refreshes the scene when a newer `.ply` is available
 
 ### Prerequisites
